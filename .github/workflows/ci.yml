@@ -1,0 +1,40 @@
+name: CI
+on: [pull_request, push]
+permissions: { contents: read }
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: case_platform
+          POSTGRES_USER: case_user
+          POSTGRES_PASSWORD: case_password
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U case_user -d case_platform"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run build --workspace=@bank-case/api
+      - run: npm exec tsc -- -p apps/web/tsconfig.json --noEmit
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:e2e --workspace=@bank-case/api
+      - run: npm run migration:run --workspace=@bank-case/api
+        env:
+          DATABASE_URL: postgresql://case_user:case_password@localhost:5433/case_platform
+      - run: npm run test:integration --workspace=@bank-case/api
+        env:
+          DATABASE_URL: postgresql://case_user:case_password@localhost:5433/case_platform
+          REDIS_URL: redis://localhost:6379

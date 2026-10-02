@@ -1,0 +1,20 @@
+{
+  "name": "bank-case-platform",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "dev:api": "npm run start:dev --workspace=@bank-case/api",
+    "dev:web": "npm run dev --workspace=@bank-case/web",
+    "build": "npm run build --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test --workspace=@bank-case/api",
+    "test:e2e": "npm run test:e2e --workspace=@bank-case/api"
+  },
+  "overrides": {
+    "@nestjs/platform-fastify": {
+      "fastify": "5.12.5"
+    }
+  },
+  "engines": { "node": ">=22" }
+}

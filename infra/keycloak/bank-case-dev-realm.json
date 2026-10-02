@@ -1,0 +1,45 @@
+{
+  "realm": "bank-case-dev",
+  "enabled": true,
+  "displayName": "Bank Case Platform (development only)",
+  "clients": [{
+    "clientId": "bank-case-web",
+    "name": "Bank Case Web",
+    "publicClient": true,
+    "standardFlowEnabled": true,
+    "directAccessGrantsEnabled": false,
+    "redirectUris": ["http://localhost:5173/*"],
+    "webOrigins": ["http://localhost:5173"],
+    "attributes": { "pkce.code.challenge.method": "S256" },
+    "protocolMappers": [{
+      "name": "audience-bank-case-api",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-audience-mapper",
+      "consentRequired": false,
+      "config": { "included.client.audience": "bank-case-api", "access.token.claim": "true", "id.token.claim": "false" }
+    },
+    { "name": "branch-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "branch", "claim.name": "branch", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
+    { "name": "queues-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "queues", "claim.name": "queues", "jsonType.label": "JSON", "multivalued": "true", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
+    { "name": "department-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "department", "claim.name": "department", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
+    { "name": "legal-entity-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "legal_entity", "claim.name": "legal_entity", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
+    { "name": "country-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "country", "claim.name": "country", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } }
+    ]
+  }],
+  "roles": { "realm": [{"name":"branch-agent"},{"name":"call-center-agent"},{"name":"case-agent"},{"name":"supervisor"},{"name":"auditor"},{"name":"administrator"},{"name":"attachment-scanner"},{"name":"integration-reconciler"},{"name":"notification-provider"}] },
+  "users": [{
+    "username": "local-branch-agent",
+    "enabled": true,
+    "emailVerified": true,
+    "firstName": "Local",
+    "lastName": "Branch Agent",
+    "realmRoles": ["branch-agent"],
+    "attributes": {
+      "branch": ["BLR-01"],
+      "queues": ["customer-support", "payments"],
+      "department": ["operations"],
+      "legal_entity": ["BANK-IN"],
+      "country": ["IN"]
+    },
+    "credentials": [{ "type": "password", "value": "local-dev-only-change-me", "temporary": false }]
+  }]
+}
