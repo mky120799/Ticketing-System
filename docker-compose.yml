@@ -39,5 +39,54 @@ services:
     command: redpanda start --smp 1 --memory 512M --overprovisioned --node-id 0 --kafka-addr PLAINTEXT://0.0.0.0:9092 --advertise-kafka-addr PLAINTEXT://localhost:9092
     ports: ["9092:9092"]
 
+  # ---- Full application (docker compose --profile app up -d --build) ----
+  migrate:
+    profiles: ["app"]
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    command: ["node", "scripts/migrate.mjs"]
+    environment: { DATABASE_URL: "postgresql://case_user:case_password@postgres:5432/case_platform" }
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+
+  api:
+    profiles: ["app"]
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    ports: ["3000:3000"]
+    read_only: true
+    tmpfs: ["/tmp"]
+    cap_drop: ["ALL"]
+    environment:
+      PORT: "3000"
+      DATABASE_URL: "postgresql://case_user:case_password@postgres:5432/case_platform"
+      REDIS_URL: "redis://redis:6379"
+      CORS_ORIGIN: "http://localhost:5173"
+      # The issuer must equal the URL browsers use; the API fetches keys over the compose network.
+      OIDC_ISSUER: "http://localhost:8080/realms/bank-case-dev"
+      OIDC_AUDIENCE: "bank-case-api"
+      OIDC_JWKS_URI: "http://keycloak:8080/realms/bank-case-dev/protocol/openid-connect/certs"
+      OUTBOX_DISPATCHER_ENABLED: "true"
+      WORKFLOW_SCHEDULER_ENABLED: "true"
+      WORKFLOW_TICK_MS: "30000"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  web:
+    profiles: ["app"]
+    build: { context: ., dockerfile: apps/web/Dockerfile }
+    ports: ["5173:8080"]
+    read_only: true
+    cap_drop: ["ALL"]
+    tmpfs:
+      - /tmp:uid=101,gid=101
+      - /var/cache/nginx:uid=101,gid=101
+      - /etc/nginx/conf.d:uid=101,gid=101
+    environment:
+      API_URL: "http://localhost:3000/v1"
+      OIDC_AUTHORITY: "http://localhost:8080/realms/bank-case-dev"
+      OIDC_CLIENT_ID: "bank-case-web"
+      CSP_CONNECT_SRC: "'self' http://localhost:3000 http://localhost:8080"
+    depends_on: [api]
+
 volumes:
   postgres_data:

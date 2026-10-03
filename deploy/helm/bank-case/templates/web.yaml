@@ -1,0 +1,53 @@
+{{- $ctx := dict "root" . "component" "web" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bank-case.fullname" . }}-web
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector:
+    matchLabels: {{- include "bank-case.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "bank-case.selector" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "bank-case.fullname" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "bank-case.podSecurity" (dict "user" 101) | nindent 6 }}
+      containers:
+        - name: web
+          image: {{ include "bank-case.image" (dict "root" . "image" .Values.image.web) }}
+          imagePullPolicy: {{ .Values.image.web.pullPolicy }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - { name: API_URL, value: "/v1" }
+            - { name: OIDC_AUTHORITY, value: {{ .Values.oidc.issuer | quote }} }
+            - { name: OIDC_CLIENT_ID, value: {{ .Values.oidc.webClientId | quote }} }
+            - { name: CSP_CONNECT_SRC, value: {{ .Values.web.cspConnectSrc | quote }} }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20 }
+          resources: {{- toYaml .Values.web.resources | nindent 12 }}
+          {{- include "bank-case.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 16Mi } }
+        - { name: nginx-cache, emptyDir: { sizeLimit: 64Mi } }
+        - { name: nginx-conf, emptyDir: { sizeLimit: 1Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bank-case.fullname" . }}-web
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "bank-case.selector" $ctx | nindent 4 }}
+  ports: [{ name: http, port: 80, targetPort: http }]

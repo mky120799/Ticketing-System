@@ -1,0 +1,15 @@
+{{- if .Values.metrics.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "bank-case.fullname" . }}-api
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "bank-case.selector" (dict "root" . "component" "api") | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /v1/metrics
+      interval: {{ .Values.metrics.serviceMonitor.interval }}
+      authorization: { type: Bearer, credentials: { name: {{ .Values.existingSecret }}, key: METRICS_TOKEN } }
+{{- end }}

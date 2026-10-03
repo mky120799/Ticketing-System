@@ -1,14 +1,14 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import type { UserContext } from './user-context.js';
 
-export type Permission = 'ticket:create' | 'ticket:read' | 'ticket:update' | 'ticket:assign' | 'ticket:approve' | 'ticket:reveal' | 'ticket:hold' | 'sla:reconcile' | 'attachment:scan' | 'integration:reconcile' | 'communication:deliver' | 'audit:read' | 'dashboard:read' | 'configuration:write';
+export type Permission = 'ticket:create' | 'ticket:read' | 'ticket:update' | 'ticket:assign' | 'ticket:approve' | 'ticket:reveal' | 'ticket:hold' | 'sla:reconcile' | 'attachment:scan' | 'integration:reconcile' | 'communication:deliver' | 'intake:create' | 'audit:read' | 'dashboard:read' | 'configuration:write';
 export interface TicketPolicySubject { queue: string; branch_code: string; department: string; legal_entity: string; country: string; sensitivity: string; created_by: string; assigned_to: string | null; }
 
 const PERMISSIONS: Record<string, Permission[]> = {
   'branch-agent': ['ticket:create', 'ticket:read'], 'call-center-agent': ['ticket:create', 'ticket:read'],
   'case-agent': ['ticket:create', 'ticket:read', 'ticket:update'],
   supervisor: ['ticket:create', 'ticket:read', 'ticket:update', 'ticket:assign', 'ticket:approve', 'ticket:reveal', 'ticket:hold', 'sla:reconcile', 'dashboard:read'],
-  auditor: ['ticket:read', 'audit:read', 'dashboard:read'], administrator: ['configuration:write', 'sla:reconcile'], 'attachment-scanner': ['attachment:scan'], 'integration-reconciler': ['integration:reconcile'], 'notification-provider': ['communication:deliver']
+  auditor: ['ticket:read', 'audit:read', 'dashboard:read'], administrator: ['configuration:write', 'sla:reconcile'], 'attachment-scanner': ['attachment:scan'], 'integration-reconciler': ['integration:reconcile'], 'notification-provider': ['communication:deliver'], 'intake-gateway': ['intake:create']
 };
 
 @Injectable()

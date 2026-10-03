@@ -9,8 +9,8 @@ import { TicketsService } from './tickets.service.js';
 export class TicketsController {
   constructor(private readonly tickets: TicketsService) {}
   @Post() create(@Req() request: FastifyRequest, @Headers('idempotency-key') key: string | undefined, @Body() dto: CreateTicketDto) { if (!key || key.length > 128) throw new BadRequestException('A valid Idempotency-Key header is required'); return this.tickets.create(request.user!, dto, key, request.correlationId!); }
-  @Get() list(@Req() request: FastifyRequest) { return this.tickets.list(request.user!); }
-  @Get('search') search(@Req() request: FastifyRequest, @Query() query: SearchTicketsQuery) { return this.tickets.search(request.user!, query); }
+  @Get() list(@Req() request: FastifyRequest) { return this.tickets.list(request.user!, request.correlationId!); }
+  @Get('search') search(@Req() request: FastifyRequest, @Query() query: SearchTicketsQuery) { return this.tickets.search(request.user!, query, request.correlationId!); }
   @Get(':ticketId') get(@Req() request: FastifyRequest, @Param('ticketId') ticketId: string) { return this.tickets.get(request.user!, ticketId, request.correlationId!); }
   @Put(':ticketId/retention') updateRetention(@Req() request: FastifyRequest, @Param('ticketId') ticketId: string, @Body() dto: UpdateRetentionControlDto) { return this.tickets.updateRetentionControl(request.user!, ticketId, dto, request.correlationId!); }
   @Patch(':ticketId') update(@Req() request: FastifyRequest, @Param('ticketId') ticketId: string, @Body() dto: UpdateTicketDto) { return this.tickets.update(request.user!, ticketId, dto, request.correlationId!); }

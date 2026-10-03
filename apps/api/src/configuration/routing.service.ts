@@ -5,7 +5,7 @@ import { PolicyService } from '../auth/policy.service.js';
 import type { UserContext } from '../auth/user-context.js';
 import { PgService } from '../database/pg.service.js';
 import { OutboxService } from '../outbox/outbox.service.js';
-import type { UpsertAssignmentRuleDto, UpsertEscalationRuleDto, UpsertQueueMemberDto } from './routing.dto.js';
+import type { UpsertAssignmentRuleDto, UpsertEscalationRuleDto, UpsertIntakeChannelDto, UpsertQueueMemberDto } from './routing.dto.js';
 
 /** Administrator-only management of who receives work and where overdue work goes. Never touches ticket content. */
 @Injectable()
@@ -77,6 +77,31 @@ export class RoutingConfigurationService {
       [ruleKey, dto.queue, dto.trigger, dto.escalateToQueue, dto.raisePriority, dto.active, user.subject]);
       const view = { ruleKey, queue: dto.queue, trigger: dto.trigger, escalateToQueue: dto.escalateToQueue, raisePriority: dto.raisePriority, active: dto.active };
       await this.record(client, user, correlationId, 'escalation_rule', 'escalation_rule', ruleKey, view);
+      return view;
+    });
+  }
+
+  async listIntakeChannels(user: UserContext): Promise<unknown[]> {
+    this.policy.assertPermission(user, 'configuration:write');
+    const result = await this.db.query<{ channel_key: string; default_category: string; default_queue: string; branch_code: string; default_priority: string; active: boolean }>(
+      'SELECT c.channel_key,c.default_category,c.default_queue,c.branch_code,c.default_priority,c.active FROM intake_channels c JOIN case_queues q ON q.queue_key=c.default_queue WHERE q.legal_entity=$1 AND q.country=$2 ORDER BY c.channel_key', [user.legalEntity, user.country]);
+    return result.rows.map((row) => ({ channel: row.channel_key, defaultCategory: row.default_category, defaultQueue: row.default_queue, branchCode: row.branch_code, defaultPriority: row.default_priority, active: row.active }));
+  }
+
+  async upsertIntakeChannel(user: UserContext, channel: string, dto: UpsertIntakeChannelDto, correlationId: string): Promise<unknown> {
+    this.policy.assertPermission(user, 'configuration:write');
+    if (!['email', 'portal', 'mobile', 'phone', 'internal'].includes(channel)) throw new ConflictException('Unknown intake channel');
+    return this.db.transaction(async (client) => {
+      await this.assertQueueInScope(client, user, dto.defaultQueue);
+      const category = await client.query('SELECT 1 FROM ticket_categories WHERE category_key=$1 AND active=true', [dto.defaultCategory]);
+      if (!category.rowCount) throw new ConflictException('Default category does not exist or is inactive');
+      const existing = (await client.query<{ legal_entity: string; country: string }>('SELECT q.legal_entity,q.country FROM intake_channels c JOIN case_queues q ON q.queue_key=c.default_queue WHERE c.channel_key=$1', [channel])).rows[0];
+      if (existing && (existing.legal_entity !== user.legalEntity || existing.country !== user.country)) throw new ForbiddenException('Channel belongs to another legal entity or country');
+      await client.query(`INSERT INTO intake_channels (channel_key,default_category,default_queue,branch_code,default_priority,active,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (channel_key) DO UPDATE SET default_category=EXCLUDED.default_category, default_queue=EXCLUDED.default_queue, branch_code=EXCLUDED.branch_code, default_priority=EXCLUDED.default_priority, active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()`,
+      [channel, dto.defaultCategory, dto.defaultQueue, dto.branchCode, dto.defaultPriority, dto.active, user.subject]);
+      const view = { channel, defaultCategory: dto.defaultCategory, defaultQueue: dto.defaultQueue, branchCode: dto.branchCode, defaultPriority: dto.defaultPriority, active: dto.active };
+      await this.record(client, user, correlationId, 'intake_channel', 'intake_channel', channel, view);
       return view;
     });
   }

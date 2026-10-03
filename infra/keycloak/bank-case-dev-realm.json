@@ -2,44 +2,395 @@
   "realm": "bank-case-dev",
   "enabled": true,
   "displayName": "Bank Case Platform (development only)",
-  "clients": [{
-    "clientId": "bank-case-web",
-    "name": "Bank Case Web",
-    "publicClient": true,
-    "standardFlowEnabled": true,
-    "directAccessGrantsEnabled": false,
-    "redirectUris": ["http://localhost:5173/*"],
-    "webOrigins": ["http://localhost:5173"],
-    "attributes": { "pkce.code.challenge.method": "S256" },
-    "protocolMappers": [{
-      "name": "audience-bank-case-api",
-      "protocol": "openid-connect",
-      "protocolMapper": "oidc-audience-mapper",
-      "consentRequired": false,
-      "config": { "included.client.audience": "bank-case-api", "access.token.claim": "true", "id.token.claim": "false" }
+  "clients": [
+    {
+      "clientId": "bank-case-web",
+      "name": "Bank Case Web",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-bank-case-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "bank-case-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        },
+        {
+          "name": "branch-claim",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "branch",
+            "claim.name": "branch",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "queues-claim",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "queues",
+            "claim.name": "queues",
+            "jsonType.label": "String",
+            "multivalued": "true",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "department-claim",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "department",
+            "claim.name": "department",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "legal-entity-claim",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "legal_entity",
+            "claim.name": "legal_entity",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "country-claim",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "country",
+            "claim.name": "country",
+            "jsonType.label": "String",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
     },
-    { "name": "branch-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "branch", "claim.name": "branch", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
-    { "name": "queues-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "queues", "claim.name": "queues", "jsonType.label": "JSON", "multivalued": "true", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
-    { "name": "department-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "department", "claim.name": "department", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
-    { "name": "legal-entity-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "legal_entity", "claim.name": "legal_entity", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } },
-    { "name": "country-claim", "protocol": "openid-connect", "protocolMapper": "oidc-usermodel-attribute-mapper", "config": { "user.attribute": "country", "claim.name": "country", "jsonType.label": "String", "access.token.claim": "true", "id.token.claim": "false", "userinfo.token.claim": "false" } }
+    {
+      "clientId": "intake-gateway",
+      "name": "Intake Gateway (dev service identity)",
+      "publicClient": false,
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "secret": "local-dev-only-intake-secret",
+      "protocolMappers": [
+        {
+          "name": "audience-bank-case-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "bank-case-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "branch-agent"
+      },
+      {
+        "name": "call-center-agent"
+      },
+      {
+        "name": "case-agent"
+      },
+      {
+        "name": "supervisor"
+      },
+      {
+        "name": "auditor"
+      },
+      {
+        "name": "administrator"
+      },
+      {
+        "name": "attachment-scanner"
+      },
+      {
+        "name": "integration-reconciler"
+      },
+      {
+        "name": "notification-provider"
+      },
+      {
+        "name": "intake-gateway"
+      }
     ]
-  }],
-  "roles": { "realm": [{"name":"branch-agent"},{"name":"call-center-agent"},{"name":"case-agent"},{"name":"supervisor"},{"name":"auditor"},{"name":"administrator"},{"name":"attachment-scanner"},{"name":"integration-reconciler"},{"name":"notification-provider"}] },
-  "users": [{
-    "username": "local-branch-agent",
-    "enabled": true,
-    "emailVerified": true,
-    "firstName": "Local",
-    "lastName": "Branch Agent",
-    "realmRoles": ["branch-agent"],
-    "attributes": {
-      "branch": ["BLR-01"],
-      "queues": ["customer-support", "payments"],
-      "department": ["operations"],
-      "legal_entity": ["BANK-IN"],
-      "country": ["IN"]
+  },
+  "users": [
+    {
+      "username": "local-branch-agent",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Local",
+      "lastName": "Branch Agent",
+      "realmRoles": [
+        "branch-agent"
+      ],
+      "attributes": {
+        "branch": [
+          "BLR-01"
+        ],
+        "queues": [
+          "customer-support",
+          "payments"
+        ],
+        "department": [
+          "operations"
+        ],
+        "legal_entity": [
+          "BANK-IN"
+        ],
+        "country": [
+          "IN"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-dev-only-change-me",
+          "temporary": false
+        }
+      ],
+      "email": "branch-agent@bank-case.example.test"
     },
-    "credentials": [{ "type": "password", "value": "local-dev-only-change-me", "temporary": false }]
-  }]
+    {
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-dev-only-change-me",
+          "temporary": false
+        }
+      ],
+      "username": "local-case-agent",
+      "firstName": "Local",
+      "lastName": "Case Agent",
+      "realmRoles": [
+        "case-agent"
+      ],
+      "attributes": {
+        "branch": [
+          "BLR-01"
+        ],
+        "queues": [
+          "customer-support",
+          "payments"
+        ],
+        "department": [
+          "operations"
+        ],
+        "legal_entity": [
+          "BANK-IN"
+        ],
+        "country": [
+          "IN"
+        ]
+      },
+      "email": "case-agent@bank-case.example.test"
+    },
+    {
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-dev-only-change-me",
+          "temporary": false
+        }
+      ],
+      "username": "local-case-agent-2",
+      "firstName": "Local",
+      "lastName": "Case Agent Two",
+      "realmRoles": [
+        "case-agent"
+      ],
+      "attributes": {
+        "branch": [
+          "BLR-01"
+        ],
+        "queues": [
+          "customer-support",
+          "payments"
+        ],
+        "department": [
+          "operations"
+        ],
+        "legal_entity": [
+          "BANK-IN"
+        ],
+        "country": [
+          "IN"
+        ]
+      },
+      "email": "case-agent-2@bank-case.example.test"
+    },
+    {
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-dev-only-change-me",
+          "temporary": false
+        }
+      ],
+      "username": "local-supervisor",
+      "firstName": "Local",
+      "lastName": "Supervisor",
+      "realmRoles": [
+        "supervisor"
+      ],
+      "attributes": {
+        "branch": [
+          "BLR-01"
+        ],
+        "queues": [
+          "customer-support",
+          "payments",
+          "fraud",
+          "cards",
+          "kyc",
+          "loans"
+        ],
+        "department": [
+          "operations"
+        ],
+        "legal_entity": [
+          "BANK-IN"
+        ],
+        "country": [
+          "IN"
+        ]
+      },
+      "email": "supervisor@bank-case.example.test"
+    },
+    {
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-dev-only-change-me",
+          "temporary": false
+        }
+      ],
+      "username": "local-auditor",
+      "firstName": "Local",
+      "lastName": "Auditor",
+      "realmRoles": [
+        "auditor"
+      ],
+      "attributes": {
+        "branch": [
+          "BLR-01"
+        ],
+        "queues": [
+          "customer-support",
+          "payments",
+          "fraud",
+          "cards",
+          "kyc",
+          "loans"
+        ],
+        "department": [
+          "operations"
+        ],
+        "legal_entity": [
+          "BANK-IN"
+        ],
+        "country": [
+          "IN"
+        ]
+      },
+      "email": "auditor@bank-case.example.test"
+    },
+    {
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-dev-only-change-me",
+          "temporary": false
+        }
+      ],
+      "username": "local-admin",
+      "firstName": "Local",
+      "lastName": "Administrator",
+      "realmRoles": [
+        "administrator"
+      ],
+      "attributes": {
+        "branch": [
+          "BLR-01"
+        ],
+        "queues": [
+          "customer-support",
+          "payments",
+          "fraud",
+          "cards",
+          "kyc",
+          "loans"
+        ],
+        "department": [
+          "operations"
+        ],
+        "legal_entity": [
+          "BANK-IN"
+        ],
+        "country": [
+          "IN"
+        ]
+      },
+      "email": "admin@bank-case.example.test"
+    },
+    {
+      "username": "service-account-intake-gateway",
+      "enabled": true,
+      "serviceAccountClientId": "intake-gateway",
+      "realmRoles": [
+        "intake-gateway"
+      ]
+    }
+  ]
 }

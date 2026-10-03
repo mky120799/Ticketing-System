@@ -11,9 +11,12 @@ import { OutboxModule } from './outbox/outbox.module.js';
 import { ConfigurationModule } from './configuration/configuration.module.js';
 import { IntegrationModule } from './integrations/integration.module.js';
 import { CacheModule } from './cache/cache.module.js';
+import { IntakeModule } from './intake/intake.module.js';
+import { ComplianceModule } from './compliance/compliance.module.js';
+import { MetricsModule } from './metrics/metrics.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { LiveModule } from './live/live.module.js';
 import { StorageModule } from './storage/storage.module.js';
 
-@Module({ imports: [DatabaseModule, CacheModule, StorageModule, AuditModule, AuthModule, TicketsModule, DashboardModule, OutboxModule, ConfigurationModule, IntegrationModule, LiveModule, WorkflowModule], controllers: [HealthController], providers: [{ provide: APP_INTERCEPTOR, useClass: DeniedAuthorizationInterceptor }] })
+@Module({ imports: [DatabaseModule, CacheModule, StorageModule, AuditModule, AuthModule, TicketsModule, DashboardModule, OutboxModule, ConfigurationModule, IntegrationModule, LiveModule, WorkflowModule, IntakeModule, ComplianceModule, MetricsModule], controllers: [HealthController], providers: [{ provide: APP_INTERCEPTOR, useClass: DeniedAuthorizationInterceptor }] })
 export class AppModule {}

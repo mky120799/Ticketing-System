@@ -1,4 +1,4 @@
-import { GetObjectCommand, PutObjectCommand, S3Client, type ServerSideEncryption } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand as PutCommand, GetObjectCommand, PutObjectCommand, S3Client, type ServerSideEncryption } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 
@@ -36,6 +36,19 @@ export class AttachmentStorageService {
       ResponseContentDisposition: `attachment; filename="${safeFilename}"`
     });
     return { url: await getSignedUrl(this.client, command, { expiresIn: this.expiresInSeconds }), expiresInSeconds: this.expiresInSeconds };
+  }
+
+  /** Stores a small JSON document (for example an audit anchor). Returns the key, or null when storage is not configured. */
+  async putJson(objectKey: string, value: unknown): Promise<string | null> {
+    if (!this.client || !this.bucket) return null;
+    await this.client.send(new PutCommand({ Bucket: this.bucket, Key: objectKey, Body: JSON.stringify(value), ContentType: 'application/json', ServerSideEncryption: this.serverSideEncryption() }));
+    return objectKey;
+  }
+
+  /** Idempotent: deleting a missing object succeeds. No-op when storage is not configured. */
+  async deleteObject(objectKey: string): Promise<void> {
+    if (!this.client || !this.bucket) return;
+    await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: objectKey }));
   }
 
   private createClient(): S3Client | null {

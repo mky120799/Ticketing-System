@@ -1,0 +1,67 @@
+# Every bank-specific value lives here (or in an overlay file). Nothing in the images is bank-specific.
+
+image:
+  registry: ""                       # e.g. registry.bank.example/case-platform
+  pullSecrets: []
+  api: { repository: bank-case-api, tag: "0.1.0", pullPolicy: IfNotPresent }
+  web: { repository: bank-case-web, tag: "0.1.0", pullPolicy: IfNotPresent }
+
+# Public host and TLS. The ingress routes /v1 to the API and everything else to the web console on one host,
+# so the browser needs no CORS. Use your ingress class and certificate issuer.
+ingress:
+  enabled: true
+  className: ""
+  host: cases.bank.example
+  tls: { enabled: true, secretName: bank-case-tls }
+  annotations: {}
+
+# Identity provider (OIDC). The platform never stores passwords.
+oidc:
+  issuer: ""            # https://idp.bank.example/realms/staff
+  audience: bank-case-api
+  jwksUri: ""           # https://idp.bank.example/realms/staff/protocol/openid-connect/certs
+  webClientId: bank-case-web
+
+# Secrets are NEVER created from values by this chart. Create a Secret (Vault/External Secrets/Sealed Secrets) with
+# these keys and name it here:
+#   DATABASE_URL (required), REDIS_URL, METRICS_TOKEN, OBJECT_STORAGE_ACCESS_KEY_ID, OBJECT_STORAGE_SECRET_ACCESS_KEY
+existingSecret: bank-case-secrets
+
+# Non-secret application settings (see apps/api/.env.example for the full list).
+config:
+  businessTimezone: Australia/Sydney
+  corsOrigin: ""                     # leave empty when using the single-host ingress
+  trustProxy: true                   # true behind the ingress/gateway so rate limiting sees real client IPs
+  rateLimitPerMinute: 600
+  outbox: { dispatcherEnabled: true, publisher: log, kafkaBrokers: "", kafkaTopicPrefix: bank-case }
+  workflowSchedulerEnabled: true
+  retentionEnforcementEnabled: false # destructive: enable only after the bank approves retention schedules
+  objectStorage: { endpoint: "", bucket: "", region: ap-southeast-2, forcePathStyle: false, serverSideEncryption: aws:kms }
+
+api:
+  replicas: 2
+  resources: { requests: { cpu: 250m, memory: 384Mi }, limits: { cpu: "1", memory: 768Mi } }
+  autoscaling: { enabled: true, minReplicas: 2, maxReplicas: 6, targetCPUUtilizationPercentage: 70 }
+  podDisruptionBudget: { enabled: true, minAvailable: 1 }
+  nodeSelector: {}
+  tolerations: []
+
+web:
+  replicas: 2
+  # Extra origins the console may call (the API is same-origin through the ingress; add the IdP origin here).
+  cspConnectSrc: "'self'"
+  resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 128Mi } }
+
+# Runs database migrations before install/upgrade as a Helm hook.
+migrations:
+  enabled: true
+
+networkPolicy:
+  enabled: true
+  # CIDRs/namespaces the API may reach. Default allows DNS and HTTPS/Postgres/Redis/Kafka egress; tighten per bank.
+  ingressNamespaceLabels: { kubernetes.io/metadata.name: ingress-nginx }
+
+metrics:
+  serviceMonitor: { enabled: false, interval: 30s }   # requires the Prometheus Operator
+
+serviceAccount: { create: true, annotations: {} }

@@ -1,0 +1,59 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $api := dict "root" . "component" "api" }}
+{{- $web := dict "root" . "component" "web" }}
+# Default deny for the release's pods, then allow only what is needed.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bank-case.fullname" . }}-default-deny
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: {{ include "bank-case.name" . }}, app.kubernetes.io/instance: {{ .Release.Name }} } }
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bank-case.fullname" . }}-api
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "bank-case.selector" $api | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
+      ports: [{ port: 3000, protocol: TCP }]
+  egress:
+    - ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+    - ports: [{ port: 443, protocol: TCP }, { port: 5432, protocol: TCP }, { port: 6379, protocol: TCP }, { port: 9092, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bank-case.fullname" . }}-web
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "bank-case.selector" $web | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
+      ports: [{ port: 8080, protocol: TCP }]
+{{- if .Values.migrations.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bank-case.fullname" . }}-migrate
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: {{ include "bank-case.name" . }}, app.kubernetes.io/component: migrate } }
+  policyTypes: [Egress]
+  egress:
+    - ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }, { port: 5432, protocol: TCP }]
+{{- end }}
+{{- end }}

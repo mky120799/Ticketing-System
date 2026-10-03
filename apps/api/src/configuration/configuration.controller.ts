@@ -5,7 +5,7 @@ import { UpsertCategoryDto, UpsertQueueDto } from './configuration.dto.js';
 import { UpsertSlaPolicyDto } from './sla-policy.dto.js';
 import { UpsertCommunicationTemplateDto } from './communication-template.dto.js';
 import { RoutingConfigurationService } from './routing.service.js';
-import { UpsertAssignmentRuleDto, UpsertEscalationRuleDto, UpsertQueueMemberDto } from './routing.dto.js';
+import { UpsertAssignmentRuleDto, UpsertEscalationRuleDto, UpsertIntakeChannelDto, UpsertQueueMemberDto } from './routing.dto.js';
 import { CaseConfigurationService } from './configuration.service.js';
 
 @Controller('configuration')
@@ -25,4 +25,6 @@ export class ConfigurationController {
   @Put('assignment-rules/:ruleKey') upsertAssignmentRule(@Req() request: FastifyRequest, @Param('ruleKey') ruleKey: string, @Body() dto: UpsertAssignmentRuleDto) { return this.routing.upsertAssignmentRule(request.user!, ruleKey, dto, request.correlationId!); }
   @Get('escalation-rules') escalationRules(@Req() request: FastifyRequest) { return this.routing.listEscalationRules(request.user!); }
   @Put('escalation-rules/:ruleKey') upsertEscalationRule(@Req() request: FastifyRequest, @Param('ruleKey') ruleKey: string, @Body() dto: UpsertEscalationRuleDto) { return this.routing.upsertEscalationRule(request.user!, ruleKey, dto, request.correlationId!); }
+  @Get('intake-channels') intakeChannels(@Req() request: FastifyRequest) { return this.routing.listIntakeChannels(request.user!); }
+  @Put('intake-channels/:channel') upsertIntakeChannel(@Req() request: FastifyRequest, @Param('channel') channel: string, @Body() dto: UpsertIntakeChannelDto) { return this.routing.upsertIntakeChannel(request.user!, channel, dto, request.correlationId!); }
 }

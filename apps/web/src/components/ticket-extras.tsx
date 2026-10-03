@@ -9,7 +9,7 @@ export function SlaAndTimeline({ ticket }: { ticket: Ticket }): JSX.Element {
   return <div className="activity">
     <h3>SLA</h3>
     <p><span className={`chip sla-${ticket.slaStatus ?? 'running'}`}>{(ticket.slaStatus ?? 'running').replace(/_/g, ' ')}</span> {ticket.assigned_to ? `Assigned to ${ticket.assigned_to}` : 'Unassigned'}</p>
-    <small>First response due {when(ticket.firstResponseDueAt)} · Resolution due {when(ticket.resolutionDueAt)}</small>
+    <small>Source: {ticket.source_channel ?? 'staff'} · </small><small>First response due {when(ticket.firstResponseDueAt)} · Resolution due {when(ticket.resolutionDueAt)}</small>
     <h3>Timeline</h3>
     {ticket.history?.length ? <ol className="timeline">{ticket.history.map((entry, index) => <li key={index} className={entry.toStatus === 'escalated' ? 'escalated' : ''}><strong>{entry.fromStatus ? `${entry.fromStatus} → ` : ''}{entry.toStatus}</strong><span>{entry.reason}</span><small>{entry.changedBy.startsWith('system:') ? `Automatic (${entry.changedBy.slice(7)})` : entry.changedBy} · {when(entry.changedAt)}</small></li>)}</ol> : <p>No status changes yet.</p>}
   </div>;

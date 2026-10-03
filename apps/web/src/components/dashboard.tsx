@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { User } from 'oidc-client-ts';
-import { getDashboard, type DashboardSummary } from '../api';
+import { downloadComplaintsRegister, getDashboard, type DashboardSummary } from '../api';
 
 const AGING_LABELS: Record<string, string> = { under_1_day: 'Under 1 day', '1_to_3_days': '1–3 days', '3_to_7_days': '3–7 days', over_7_days: 'Over 7 days' };
 
@@ -8,14 +8,28 @@ const AGING_LABELS: Record<string, string> = { under_1_day: 'Under 1 day', '1_to
 export function Dashboard({ user, onError }: { user: User; onError: (message: string) => void }): JSX.Element {
   const [data, setData] = useState<DashboardSummary | null>(null);
   const load = () => { void getDashboard(user).then(setData).catch((e: Error) => onError(e.message)); };
-  useEffect(load, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [user]);
   if (!data) return <section><h2>Dashboard</h2><p>Loading…</p></section>;
   const maxAging = Math.max(1, ...data.aging.map((bucket) => bucket.count));
+  const maxCause = Math.max(1, ...data.last30Days.rootCauses.map((item) => item.count)); const maxChannel = Math.max(1, ...data.last30Days.channels.map((item) => item.count)); const pctText = (value: number | null) => (value === null ? '—' : `${value}%`);
   const slaCompliance = data.totals.active ? Math.round(((data.totals.active - data.totals.overdue) / data.totals.active) * 100) : 100;
   return <section className="dashboard">
     <div className="row"><h2>Case dashboard</h2><button className="secondary" onClick={load}>Refresh</button><small>As of {new Date(data.asOf).toLocaleTimeString()}</small></div>
     <div className="tiles">
       {([['Active', data.totals.active], ['Overdue', data.totals.overdue], ['Resolved', data.totals.resolved], ['Closed', data.totals.closed], ['On-time (active)', `${slaCompliance}%`]] as const).map(([label, value]) => <div className="tile" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+    </div>
+    <h3>Open complaints</h3>
+    <div className="tiles">
+      {([['Open', data.complaints.open], ['Acknowledgement overdue', data.complaints.ackOverdue], ['At risk', data.complaints.atRisk], ['Final response overdue', data.complaints.finalResponseOverdue], ['Vulnerable customers', data.complaints.vulnerable], ['With external scheme', data.complaints.withExternalDisputeScheme]] as const).map(([label, value]) => <div className="tile" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+    </div>
+    <div className="row"><button className="secondary" onClick={() => { const to = new Date().toISOString().slice(0, 10); const from = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10); void downloadComplaintsRegister(user, from, to).catch((e: Error) => onError(e.message)); }}>Export complaints register (last 90 days, CSV)</button></div>
+    <h3>Last 30 days</h3>
+    <div className="tiles">
+      {([['Resolved', data.last30Days.resolved], ['Resolved on time', pctText(data.last30Days.resolvedOnTimePercent)], ['First response on time', pctText(data.last30Days.firstResponseOnTimePercent)], ['Avg first response', data.last30Days.avgFirstResponseMinutes === null ? '—' : `${data.last30Days.avgFirstResponseMinutes} min`], ['Escalations', data.last30Days.escalations]] as const).map(([label, value]) => <div className="tile" key={label}><span>{label}</span><strong>{value}</strong></div>)}
+    </div>
+    <div className="admin-grid">
+      <div><h3>Root causes (resolved)</h3>{data.last30Days.rootCauses.length ? data.last30Days.rootCauses.map((item) => <div className="bar-row" key={item.cause}><span>{item.cause.replace(/_/g, ' ')}</span><div className="bar"><div style={{ width: `${(item.count / maxCause) * 100}%` }} /></div><b>{item.count}</b></div>) : <p>No resolved tickets yet.</p>}</div>
+      <div><h3>Tickets by source channel</h3>{data.last30Days.channels.length ? data.last30Days.channels.map((item) => <div className="bar-row" key={item.channel}><span>{item.channel}</span><div className="bar"><div style={{ width: `${(item.count / maxChannel) * 100}%` }} /></div><b>{item.count}</b></div>) : <p>No tickets.</p>}</div>
     </div>
     <h3>Workload by queue</h3>
     <table><thead><tr><th>Queue</th><th>Active</th><th>Overdue</th><th>Total</th></tr></thead><tbody>{data.queues.map((row) => <tr key={row.queue}><td>{row.queue}</td><td>{row.active}</td><td className={row.overdue ? 'bad' : ''}>{row.overdue}</td><td>{row.total}</td></tr>)}</tbody></table>

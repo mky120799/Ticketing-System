@@ -54,6 +54,8 @@ export class LiveEventsService implements OnModuleInit, OnModuleDestroy {
     return () => { this.subscribers.delete(subscriber); };
   }
 
+  streamCount(): number { return this.subscribers.size; }
+
   onModuleInit(): void { if (process.env.DATABASE_URL) void this.connect(); }
 
   async onModuleDestroy(): Promise<void> {
@@ -76,7 +78,10 @@ export class LiveEventsService implements OnModuleInit, OnModuleDestroy {
     client.on('error', lost); client.on('end', lost);
     client.on('notification', (message) => { if (message.channel === CHANNEL && message.payload) this.dispatch(message.payload); });
     try {
-      await client.connect(); await client.query(`LISTEN ${CHANNEL}`);
+      await client.connect();
+      // The application may have shut down while we were connecting; do not leave an orphaned connection behind.
+      if (this.stopped) { await client.end().catch(() => undefined); return; }
+      await client.query(`LISTEN ${CHANNEL}`);
       this.listener = client; this.attempt = 0;
       // Events raised while the listener was down are gone; tell clients to refetch.
       if (this.hasConnectedBefore) this.broadcast({ event: 'resync', data: {} });

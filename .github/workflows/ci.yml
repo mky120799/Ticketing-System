@@ -27,7 +27,7 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run build --workspace=@bank-case/api
-      - run: npm exec tsc -- -p apps/web/tsconfig.json --noEmit
+      - run: npm run build --workspace=@bank-case/web
       - run: npm run lint
       - run: npm test
       - run: npm run test:e2e --workspace=@bank-case/api
@@ -38,3 +38,17 @@ jobs:
         env:
           DATABASE_URL: postgresql://case_user:case_password@localhost:5433/case_platform
           REDIS_URL: redis://localhost:6379
+
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint and render the Helm chart
+        run: |
+          helm lint deploy/helm/bank-case --set oidc.issuer=https://idp.example/realms/x --set oidc.jwksUri=https://idp.example/certs
+          helm template ci deploy/helm/bank-case --set oidc.issuer=https://idp.example/realms/x --set oidc.jwksUri=https://idp.example/certs > /dev/null
+      - name: Build container images
+        run: |
+          docker build -f apps/api/Dockerfile -t bank-case-api:ci .
+          docker build -f apps/web/Dockerfile -t bank-case-web:ci .

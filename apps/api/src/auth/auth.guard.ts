@@ -3,8 +3,8 @@ import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import type { FastifyRequest } from 'fastify';
 import type { CaseRole, UserContext } from './user-context.js';
 
-const ROLES: CaseRole[] = ['branch-agent', 'call-center-agent', 'case-agent', 'supervisor', 'auditor', 'administrator', 'attachment-scanner', 'integration-reconciler', 'notification-provider'];
-const SERVICE_ROLES: CaseRole[] = ['attachment-scanner', 'integration-reconciler', 'notification-provider'];
+const ROLES: CaseRole[] = ['branch-agent', 'call-center-agent', 'case-agent', 'supervisor', 'auditor', 'administrator', 'attachment-scanner', 'integration-reconciler', 'notification-provider', 'intake-gateway'];
+const SERVICE_ROLES: CaseRole[] = ['attachment-scanner', 'integration-reconciler', 'notification-provider', 'intake-gateway'];
 
 @Injectable()
 export class AuthGuard implements CanActivate {

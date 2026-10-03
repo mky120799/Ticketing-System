@@ -64,11 +64,19 @@ export class CaseConfigurationService {
       const queue = await client.query<{ legal_entity: string; country: string }>('SELECT legal_entity,country FROM case_queues WHERE queue_key=$1', [dto.defaultQueue]);
       if (!queue.rows[0]) throw new ConflictException('Default queue does not exist');
       this.assertScope(user, queue.rows[0].legal_entity, queue.rows[0].country);
-      const result = await client.query<{ category_key: string; default_queue: string; active: boolean }>(`INSERT INTO ticket_categories (category_key,default_queue,active,updated_by)
-        VALUES ($1,$2,$3,$4)
-        ON CONFLICT (category_key) DO UPDATE SET default_queue=EXCLUDED.default_queue, active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()
-        RETURNING category_key,default_queue,active`, [categoryKey, dto.defaultQueue, dto.active, user.subject]);
-      await this.audit.write(client, { actorId: user.subject, action: 'configuration.category_updated', targetType: 'category', targetId: categoryKey, correlationId, outcome: 'success', metadata: { defaultQueue: dto.defaultQueue, active: dto.active } });
+      if (dto.regulatoryProfile) {
+        const profile = await client.query('SELECT 1 FROM regulatory_profiles WHERE profile_key=$1 AND active=true AND jurisdiction=$2', [dto.regulatoryProfile, user.country]);
+        if (!profile.rowCount) throw new ConflictException('Regulatory profile does not exist, is inactive, or belongs to another jurisdiction');
+      }
+      if (dto.workflowKey) {
+        const workflow = await client.query('SELECT 1 FROM workflow_definitions WHERE workflow_key=$1 AND active=true', [dto.workflowKey]);
+        if (!workflow.rowCount) throw new ConflictException('Workflow does not exist or is inactive');
+      }
+      const result = await client.query<{ category_key: string; default_queue: string; active: boolean }>(`INSERT INTO ticket_categories (category_key,default_queue,active,regulatory_profile,block_customer_communication,workflow_key,retention_years,updated_by)
+        VALUES ($1,$2,$3,$4,$5,COALESCE($6,'standard'),COALESCE($7,7),$8)
+        ON CONFLICT (category_key) DO UPDATE SET default_queue=EXCLUDED.default_queue, active=EXCLUDED.active, regulatory_profile=EXCLUDED.regulatory_profile, block_customer_communication=EXCLUDED.block_customer_communication, workflow_key=EXCLUDED.workflow_key, retention_years=EXCLUDED.retention_years, updated_by=EXCLUDED.updated_by, updated_at=now()
+        RETURNING category_key,default_queue,active`, [categoryKey, dto.defaultQueue, dto.active, dto.regulatoryProfile ?? null, dto.blockCustomerCommunication ?? false, dto.workflowKey ?? null, dto.retentionYears ?? null, user.subject]);
+      await this.audit.write(client, { actorId: user.subject, action: 'configuration.category_updated', targetType: 'category', targetId: categoryKey, correlationId, outcome: 'success', metadata: { defaultQueue: dto.defaultQueue, active: dto.active, regulatoryProfile: dto.regulatoryProfile ?? null, blockCustomerCommunication: dto.blockCustomerCommunication ?? false } });
       await this.outbox.enqueue(client, { eventType: 'configuration.category_changed', aggregateType: 'category', aggregateId: categoryKey, correlationId, payload: { category: categoryKey, defaultQueue: dto.defaultQueue, active: dto.active } });
       const row = result.rows[0];
       return { category: row.category_key, defaultQueue: row.default_queue, active: row.active };

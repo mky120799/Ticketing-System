@@ -7,9 +7,12 @@ import { OutboxService } from '../outbox/outbox.service.js';
 
 export const ESCALATION_ACTOR = 'system:escalation';
 const PRIORITY_STEP: Record<string, string> = { low: 'normal', normal: 'high', high: 'critical', critical: 'critical' };
-// "First response" is approximated by work having started: a ticket still submitted/triage/assigned has had none.
+// First response = the first customer-facing action (customer note, queued communication, pending-customer or resolve).
 const TRIGGER_SQL: Record<string, string> = {
-  first_response_overdue: "t.status IN ('submitted','triage','assigned') AND t.first_response_due_at <= now()",
+  first_response_overdue: "t.status NOT IN ('resolved','closed','cancelled') AND t.first_responded_at IS NULL AND t.first_response_due_at <= now()",
+  regulatory_ack_overdue: "t.is_complaint=true AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status='ack_overdue'",
+  regulatory_at_risk: "t.is_complaint=true AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status IN ('at_risk','final_response_overdue')",
+  regulatory_breached: "t.is_complaint=true AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status='final_response_overdue'",
   breached: "t.status NOT IN ('resolved','closed','cancelled') AND t.resolution_due_at <= now()"
 };
 const BATCH_PER_RULE = 100;

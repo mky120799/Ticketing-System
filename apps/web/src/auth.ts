@@ -1,7 +1,9 @@
 import { UserManager, WebStorageStateStore, type User } from 'oidc-client-ts';
 
-const authority = import.meta.env.VITE_OIDC_AUTHORITY;
-const clientId = import.meta.env.VITE_OIDC_CLIENT_ID;
+import { config } from './config';
+
+const authority = config.oidcAuthority;
+const clientId = config.oidcClientId;
 if (!authority || !clientId) throw new Error('OIDC authority and client ID must be configured');
 
 export const userManager = new UserManager({

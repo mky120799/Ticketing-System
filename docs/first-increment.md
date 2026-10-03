@@ -52,6 +52,18 @@ Active queues, categories, SLA policies, and communication templates are governe
 
 Redis is available as an optional cache for the safe active communication-template list. Cache connection or serialization failures fail open to PostgreSQL, writes invalidate the key, and no ticket, authorization, SLA, or audit decision depends on Redis.
 
+## Regulatory complaints
+
+Categories can be linked to a regulatory profile; their tickets become complaints with acknowledgement and final-response clocks, IDR outcome on resolution, external dispute tracking, vulnerability flags, a communication block and a complaints register. See [`implementation-log.md`](implementation-log.md) entries 7 and 8.
+
+## Intake channels
+
+`POST /v1/intake/{channel}` accepts one normalized message from a channel adapter authenticated as `intake-gateway`. It is idempotent per source message ID, routes by admin-managed channel defaults, and enters the same SLA, assignment, audit, outbox and live-update path as staff-created tickets. See [`implementation-log.md`](implementation-log.md) entry 5.
+
+## Operator UI
+
+The web app has Workspace, Dashboard (supervisor/auditor) and Administration (administrator) views; details in [`implementation-log.md`](implementation-log.md) entry 4.
+
 ## Routing, SLA timer and escalation
 
 Administrators configure queue members, assignment rules (`least_loaded` or `round_robin`, matched by queue/category/priority) and escalation rules under `/v1/configuration`. New tickets are auto-assigned in the creating transaction. A scheduler (`WORKFLOW_SCHEDULER_ENABLED=true`) recomputes SLA status and escalates overdue tickets as the `system:*` actors, idempotently per ticket and rule; every action is audited, emitted to the outbox and pushed live. See [`implementation-log.md`](implementation-log.md) entry 3.

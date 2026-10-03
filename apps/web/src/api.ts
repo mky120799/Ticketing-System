@@ -1,7 +1,9 @@
 import type { User } from 'oidc-client-ts';
 import { signOut } from './auth';
 
-const baseUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:3000/v1';
+import { config } from './config';
+
+const baseUrl = config.apiUrl;
 export interface TicketReference { referenceType: string; sourceSystem: string; maskedValue: string; classification: string; }
 export interface TicketNote { id: string; visibility: string; body: string; authorId: string; createdAt: string; }
 export interface TicketCommunication { id: string; channel: string; templateKey: string; recipientMasked: string; status: string; approvalId?: string; createdAt: string; }
@@ -10,7 +12,7 @@ export interface TicketListItem { id: string; category: string; priority: string
 export interface TicketAttachment { id: string; filename: string; contentType: string; sizeBytes: number; classification: string; uploadStatus: string; malwareStatus: string; uploadedBy: string; createdAt: string; }
 export interface RelatedTicket { ticketId: string; relationshipType: string; direction: string; }
 export interface StatusHistoryEntry { fromStatus: string | null; toStatus: string; reason: string; changedBy: string; changedAt: string; }
-export interface Ticket extends TicketListItem { description: string; assigned_to?: string | null; slaStatus?: string | null; firstResponseDueAt?: string | null; resolutionDueAt?: string | null; attachments?: TicketAttachment[]; relatedTickets?: RelatedTicket[]; history?: StatusHistoryEntry[]; references?: TicketReference[]; notes?: TicketNote[]; communications?: TicketCommunication[]; retention?: TicketRetention | null; }
+export interface Ticket extends TicketListItem { description: string; assigned_to?: string | null; source_channel?: string; allowedNextStatuses?: string[]; is_complaint?: boolean; regulatory_profile?: string | null; regulatory_status?: string | null; acknowledge_due_at?: string | null; final_response_due_at?: string | null; vulnerability_flag?: boolean; systemic_issue?: boolean; afca_status?: string; afca_reference?: string | null; communications_blocked?: boolean; idr_outcome?: string | null; root_cause?: string | null; slaStatus?: string | null; firstResponseDueAt?: string | null; resolutionDueAt?: string | null; attachments?: TicketAttachment[]; relatedTickets?: RelatedTicket[]; history?: StatusHistoryEntry[]; references?: TicketReference[]; notes?: TicketNote[]; communications?: TicketCommunication[]; retention?: TicketRetention | null; }
 export interface CurrentUser { subject: string; roles: string[]; branch: string; queues: string[]; department: string; legalEntity: string; country: string; }
 export interface CommunicationTemplate { templateKey: string; channel: string; active: boolean; requiresApproval: boolean; }
 
@@ -27,7 +29,7 @@ export const getCommunicationTemplates = (user: User): Promise<CommunicationTemp
 export const getTicket = (user: User, id: string): Promise<Ticket> => request(user, `/tickets/${id}`);
 export const createTicket = (user: User, ticket: Record<string, unknown>): Promise<Ticket> => request(user, '/tickets', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(ticket) });
 export const addNote = (user: User, id: string, body: string): Promise<{ id: string }> => request(user, `/tickets/${id}/notes`, { method: 'POST', body: JSON.stringify({ visibility: 'internal', body }) });
-export const transitionTicket = (user: User, id: string, toStatus: string, reason: string): Promise<Ticket> => request(user, `/tickets/${id}/status`, { method: 'POST', body: JSON.stringify({ toStatus, reason }) });
+export const transitionTicket = (user: User, id: string, toStatus: string, reason: string, rootCause?: string, idrOutcome?: string): Promise<Ticket> => request(user, `/tickets/${id}/status`, { method: 'POST', body: JSON.stringify({ toStatus, reason, ...(rootCause ? { rootCause } : {}), ...(idrOutcome ? { idrOutcome } : {}) }) });
 export const createCommunication = (user: User, id: string, payload: { channel: string; templateKey: string; recipientReference: string }): Promise<{ id: string; status: string; approvalId?: string }> => request(user, `/tickets/${id}/communications`, { method: 'POST', body: JSON.stringify(payload) });
 export const decideApproval = (user: User, ticketId: string, approvalId: string, decision: 'approved' | 'rejected'): Promise<{ id: string; status: string }> => request(user, `/tickets/${ticketId}/approvals/${approvalId}/decision`, { method: 'POST', body: JSON.stringify({ decision }) });
 export const updateRetention = (user: User, ticketId: string, payload: { legalHold: boolean; retentionUntil?: string; holdReason?: string }): Promise<TicketRetention & { ticketId: string }> => request(user, `/tickets/${ticketId}/retention`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -72,10 +74,11 @@ export function subscribeToLiveEvents(user: User, handlers: LiveHandlers): () =>
   return () => controller.abort();
 }
 
-export interface DashboardSummary { asOf: string; totals: { total: number; active: number; resolved: number; closed: number; overdue: number }; queues: { queue: string; total: number; active: number; overdue: number }[]; aging: { bucket: string; count: number }[]; }
+export interface DashboardSummary { asOf: string; totals: { total: number; active: number; resolved: number; closed: number; overdue: number }; queues: { queue: string; total: number; active: number; overdue: number }[]; aging: { bucket: string; count: number }[]; complaints: { open: number; ackOverdue: number; atRisk: number; finalResponseOverdue: number; vulnerable: number; withExternalDisputeScheme: number }; last30Days: { resolved: number; resolvedOnTimePercent: number | null; firstResponseOnTimePercent: number | null; avgFirstResponseMinutes: number | null; escalations: number; rootCauses: { cause: string; count: number }[]; channels: { channel: string; count: number }[] }; }
 export interface AuditEvent { id: string; occurredAt: string; actorId: string; action: string; outcome: string; correlationId: string; metadata: Record<string, unknown>; eventHash: string; previousHash: string | null; }
 export interface QueueMember { userId: string; active: boolean; lastAssignedAt: string | null; }
 export interface AssignmentRule { ruleKey: string; queue: string; category: string | null; priority: string | null; strategy: string; sortOrder: number; active: boolean; }
+export interface IntakeChannel { channel: string; defaultCategory: string; defaultQueue: string; branchCode: string; defaultPriority: string; active: boolean; }
 export interface EscalationRule { ruleKey: string; queue: string; trigger: string; escalateToQueue: string; raisePriority: boolean; active: boolean; }
 
 const put = (user: User, path: string, body: unknown) => request<unknown>(user, path, { method: 'PUT', body: JSON.stringify(body) });
@@ -104,3 +107,37 @@ export async function uploadAttachment(user: User, ticketId: string, file: File,
   await request(user, `/tickets/${ticketId}/attachments/${intent.id}/complete`, { method: 'POST', body: JSON.stringify({ checksumSha256, sizeBytes: file.size }) });
   return { stored: true };
 }
+export const getIntakeChannels = (user: User): Promise<IntakeChannel[]> => request(user, '/configuration/intake-channels');
+export const saveIntakeChannel = (user: User, c: IntakeChannel) => put(user, `/configuration/intake-channels/${c.channel}`, { defaultCategory: c.defaultCategory, defaultQueue: c.defaultQueue, branchCode: c.branchCode, defaultPriority: c.defaultPriority, active: c.active });
+
+export const ROOT_CAUSES = ['process_gap', 'system_error', 'staff_error', 'customer_error', 'third_party', 'fraud_or_scam', 'policy_or_product', 'communication', 'other'] as const;
+
+export interface RegulatoryProfile { profileKey: string; label: string; jurisdiction: string; acknowledgeBusinessDays: number; finalResponseCalendarDays: number; atRiskDays: number; active: boolean; }
+export interface Holiday { date: string; name: string; }
+export const IDR_OUTCOMES = ['upheld', 'partially_upheld', 'not_upheld', 'withdrawn', 'resolved_by_agreement'] as const;
+export const classifyComplaint = (user: User, id: string, body: { isComplaint: boolean; profileKey?: string; vulnerabilityFlag?: boolean; systemicIssue?: boolean; reason: string }) => put(user, `/tickets/${id}/complaint`, body);
+export const updateAfca = (user: User, id: string, status: string, reference?: string) => request<unknown>(user, `/tickets/${id}/afca`, { method: 'POST', body: JSON.stringify({ status, ...(reference ? { reference } : {}) }) });
+export const setCommunicationBlock = (user: User, id: string, blocked: boolean, reason: string) => put(user, `/tickets/${id}/communication-block`, { blocked, reason });
+export const getRegulatoryProfiles = (user: User): Promise<RegulatoryProfile[]> => request(user, '/configuration/regulatory-profiles');
+export const saveRegulatoryProfile = (user: User, p: RegulatoryProfile) => put(user, `/configuration/regulatory-profiles/${p.profileKey}`, { label: p.label, jurisdiction: p.jurisdiction, acknowledgeBusinessDays: p.acknowledgeBusinessDays, finalResponseCalendarDays: p.finalResponseCalendarDays, atRiskDays: p.atRiskDays, active: p.active });
+export const getHolidays = (user: User): Promise<Holiday[]> => request(user, '/configuration/holidays');
+export const saveHoliday = (user: User, h: Holiday) => put(user, `/configuration/holidays/${h.date}`, { name: h.name });
+/** Downloads the complaints register as CSV (the response is not JSON, so it bypasses request()). */
+export async function downloadComplaintsRegister(user: User, from: string, to: string): Promise<void> {
+  const response = await fetch(`${baseUrl}/reports/complaints?from=${from}&to=${to}&format=csv`, { headers: { Authorization: `Bearer ${user.access_token}`, 'X-Correlation-Id': crypto.randomUUID() } });
+  if (!response.ok) throw new Error('Unable to export the complaints register');
+  const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a'); link.href = url; link.download = `complaints-register-${from}-to-${to}.csv`; link.click(); URL.revokeObjectURL(url);
+}
+export interface WorkflowDefinition { workflowKey: string; label: string; active: boolean; transitions: { from: string; to: string; allowedRoles?: string[] }[]; }
+export const getWorkflows = (user: User): Promise<WorkflowDefinition[]> => request(user, '/configuration/workflows');
+export const saveWorkflow = (user: User, w: WorkflowDefinition) => put(user, `/configuration/workflows/${w.workflowKey}`, { label: w.label, active: w.active, transitions: w.transitions });
+
+export interface ChainVerification { status: 'valid' | 'invalid'; verifiedThroughSequence: number; eventsChecked: number; legacyEvents: number; failureSequence?: number; failureReason?: string; verifiedAt: string; }
+export interface ChainStatus { verification: ChainVerification | null; lastAnchor: { sequence: number; headHash: string; createdAt: string } | null; }
+export interface AuditSearchEvent { sequence: number; id: string; occurredAt: string; actorId: string; action: string; targetType: string; targetId: string; outcome: string; metadata: Record<string, unknown>; eventHash: string; }
+export const getChainStatus = (user: User): Promise<ChainStatus> => request(user, '/audit/chain-status');
+export const verifyChain = (user: User, full: boolean): Promise<ChainVerification> => request(user, `/audit/verify${full ? '?full=true' : ''}`, { method: 'POST' });
+export const searchAudit = (user: User, filters: { actor?: string; action?: string; outcome?: string; from?: string; to?: string; before?: number }): Promise<{ events: AuditSearchEvent[]; nextBefore: number | null }> => {
+  const params = new URLSearchParams({ limit: '50' }); for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== '') params.set(key, String(value));
+  return request(user, `/audit/events?${params.toString()}`);
+};

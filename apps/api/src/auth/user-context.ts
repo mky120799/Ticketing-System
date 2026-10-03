@@ -1,4 +1,4 @@
-export type CaseRole = 'branch-agent' | 'call-center-agent' | 'case-agent' | 'supervisor' | 'auditor' | 'administrator' | 'attachment-scanner' | 'integration-reconciler' | 'notification-provider';
+export type CaseRole = 'branch-agent' | 'call-center-agent' | 'case-agent' | 'supervisor' | 'auditor' | 'administrator' | 'attachment-scanner' | 'integration-reconciler' | 'notification-provider' | 'intake-gateway';
 
 export interface UserContext {
   subject: string;

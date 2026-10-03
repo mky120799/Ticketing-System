@@ -1,20 +1,31 @@
-# Bank Case Platform — first working increment
+# Bank Case Platform
 
-Security-first local scaffold for a bank ticketing platform. It uses PostgreSQL for authoritative ticket and append-only audit data, and Keycloak only as a **development OIDC provider**. The application does not create, store, or verify local passwords.
+Security-first case-management and ticketing platform for banks: a modular monolith (NestJS API, React console, PostgreSQL) deployed single-tenant per bank, with jurisdiction rules, workflows and routing held as configuration. It uses PostgreSQL for authoritative ticket and append-only audit data, and Keycloak only as a **development OIDC provider**. The application does not create, store, or verify local passwords.
 
 The design baseline, permission matrix, architecture boundaries, API strategy, phased plan, risks, and pilot acceptance boundary are documented in [`docs/architecture.md`](docs/architecture.md). The implemented slice and its deliberate production boundaries are in [`docs/first-increment.md`](docs/first-increment.md).
 
 ## Run locally
 
+**Everything in containers (needs Docker):**
+
+```bash
+docker compose --profile app up -d --build     # Postgres, Redis, Keycloak, migrations, API, web
+open http://localhost:5173                     # sign in as local-supervisor (password below)
+npm install && npm run intake:simulate --workspace=@bank-case/api   # simulate an incoming email
+```
+
+**For development (hot reload):**
+
 1. Copy `apps/api/.env.example` to `apps/api/.env` and `apps/web/.env.example` to `apps/web/.env`.
-2. Start services: `docker compose up -d`. PostgreSQL is published on local port `5433` to avoid conflicting with an existing local PostgreSQL installation.
-3. Install dependencies: `npm install`.
-4. Run the migration with `DATABASE_URL` exported from `apps/api/.env`: `set -a; . apps/api/.env; set +a; npm run migration:run --workspace=@bank-case/api`.
-5. Start the API: `npm run dev:api`; start the web app separately with `npm run dev:web`.
+2. `docker compose up -d` starts PostgreSQL (published on `5433`), Redis and Keycloak.
+3. `npm install`, then run migrations: `set -a; . apps/api/.env; set +a; npm run migration:run --workspace=@bank-case/api`.
+4. `npm run dev:api` and `npm run dev:web`.
 
-To exercise the database-backed lifecycle slice after the migration, run `npm run test:integration --workspace=@bank-case/api`.
+If you ran an earlier version, recreate Keycloak to import the current realm: `docker compose up -d --force-recreate keycloak`.
 
-Keycloak is available at `http://localhost:8080`. The imported development realm includes `local-branch-agent` with password `local-dev-only-change-me`; this credential exists only inside the disposable Keycloak development realm and is not handled by the application. Change or remove it before sharing the environment. The API health checks are `GET /v1/health/live` and `GET /v1/health/ready`.
+Tests: `npm test` (unit), `npm run test:e2e`, and `npm run test:integration --workspace=@bank-case/api` (needs a migrated, otherwise empty database). Deployment, security and onboarding guides: [`docs/deployment.md`](docs/deployment.md), [`docs/security.md`](docs/security.md), [`docs/bank-onboarding.md`](docs/bank-onboarding.md). How each feature was built: [`docs/implementation-log.md`](docs/implementation-log.md).
+
+Keycloak runs at `http://localhost:8080`. The development realm has `local-branch-agent`, `local-case-agent`, `local-case-agent-2`, `local-supervisor`, `local-auditor` and `local-admin`, all with password `local-dev-only-change-me`, plus an `intake-gateway` service client (secret `local-dev-only-intake-secret`). These credentials exist only in the disposable development realm and are never handled by the application; remove them before sharing an environment. Health checks: `GET /v1/health/live` and `GET /v1/health/ready`.
 
 ## Security properties delivered
 
@@ -22,7 +33,7 @@ Keycloak is available at `http://localhost:8080`. The imported development realm
 - Server-side default-deny permissions plus branch, queue, and sensitivity checks.
 - Masked customer references by default; a separate controlled reveal action is audited.
 - Idempotent ticket creation with request fingerprint conflict detection.
-- Transactional, hash-chained audit events for material ticket actions, with PostgreSQL-enforced append-only mutation protection.
+- Transactional, hash-chained audit events (timestamps included in the hash) with PostgreSQL-enforced append-only protection, scheduled integrity verification, daily externally published anchors, auditor search, and audited list views.
 - An approver cannot approve their own controlled action.
 - Notes and allow-listed lifecycle transitions are stored with actor, reason, and audit history.
 - New tickets receive persisted priority-based first-response and resolution deadlines from `sla_policies`.
@@ -44,11 +55,20 @@ Keycloak is available at `http://localhost:8080`. The imported development realm
 - Audited report exports are available to auditors and preserve the same masked/minimized event payload.
 - Redis is an optional, fail-open cache for safe active communication-template metadata; PostgreSQL remains authoritative and template writes invalidate the cache.
 - Queue and category choices are configuration-backed and filtered by the caller's authorization claims.
-- The React workspace exposes masked communication history, template-based requests, and supervisor approval actions while relying on the API for authorization.
+- The React workspace exposes masked communication history, template-based requests, and supervisor approval actions while relying on the API for authorization. It also provides SLA/escalation timeline, checksummed direct-to-storage attachments, linked tickets, auditor hash-chain view, a scoped dashboard, and an administrator routing console.
 - Authorized users see ticket changes live over an SSE stream fed by transactional `pg_notify`; events are policy-filtered per subscriber and carry no customer data (see `docs/implementation-log.md`).
 - Configurable auto-assignment (least-loaded/round-robin) and an SLA timer with idempotent, audited multi-level escalation run as system actors, safe across multiple API instances.
+- Channel adapters (email, portal, mobile, phone, internal) create tickets through one idempotent intake endpoint under a least-privilege `intake-gateway` service identity, with admin-managed per-channel routing.
+- Regulatory complaint handling is configuration: profiles define acknowledgement and final-response clocks (Australian ASIC RG 271 defaults seeded), with business-day maths, IDR outcomes, external-scheme tracking, vulnerability flags, a communication block for tipping-off control, and an audited complaints register export.
+- SLA status uses measured first-response and resolution timestamps; resolving requires a root cause.
+- The API sets strict security headers, rate limits clients, caps request bodies and redacts credentials from logs.
+- Opt-in retention enforcement de-identifies expired closed tickets (respecting legal holds) while keeping the immutable audit trail; ticket lifecycles are per-category data; Prometheus metrics are token-protected.
 - Scoped ticket search returns minimized metadata only; descriptions, references, notes, and communication recipients are excluded from search results.
 
-## Deliberate pilot boundaries
+## What is and isn't done
 
-Camunda, a bank-approved Kafka/event bus (a Kafka publisher exists but is untested against a broker), bank source-system adapters, object storage delivery, and production telemetry are intentionally not wired in this increment. The notification provider boundary is represented by a narrowly scoped delivery-receipt callback, not a provider client. Redis is included only as an optional local cache seam and is not required for correctness. Notes, basic lifecycle transitions, and governed communication requests are present; long-running SLA/workflow orchestration belongs to the next approved pilot slice. See `docs/first-increment.md`.
+**Built and verified locally** (PostgreSQL 18, Docker, real Keycloak): ticket lifecycle with per-category workflows, RBAC and scoping, immutable audit, outbox dispatcher, live updates, SLA and regulatory clocks, complaints (ASIC RG 271 profile as data), assignment and escalation, intake channel stub, retention enforcement, subject-access export, dashboards and register export, hardened containers and a Helm chart.
+
+**Deliberately not in this repository** (needs the bank's environment): the bank IdP and gateway, a Camunda or other BPMN engine (workflows are data-driven and engine-agnostic; see `docs/implementation-log.md` entry 9), a Kafka cluster (a publisher exists but has not been run against a broker), real object storage and malware scanning, source-system adapters (core banking, CRM, cards, KYC, fraud), real notification providers, customer portal and mobile identity, SIEM and tracing endpoints.
+
+**Before production:** threat-model workshop and penetration test with the bank, accessibility audit, load and disaster-recovery tests, retention schedules approved, security and privacy sign-off. See [`docs/security.md`](docs/security.md) section 7 for the full list of known gaps.

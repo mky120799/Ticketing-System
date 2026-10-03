@@ -37,7 +37,9 @@ export class ApprovalDecisionDto { @IsIn(['approved', 'rejected']) decision!: 'a
 export const TICKET_STATUSES = ['submitted', 'triage', 'assigned', 'in_progress', 'pending_customer', 'pending_external', 'pending_approval', 'escalated', 'resolved', 'closed', 'reopened', 'cancelled'] as const;
 export type TicketStatus = (typeof TICKET_STATUSES)[number];
 export class AddNoteDto { @IsIn(['internal', 'customer']) visibility!: 'internal' | 'customer'; @IsString() @Length(1, 10000) body!: string; }
-export class TransitionTicketDto { @IsIn(TICKET_STATUSES) toStatus!: TicketStatus; @IsString() @Length(2, 500) reason!: string; }
+export const ROOT_CAUSES = ['process_gap', 'system_error', 'staff_error', 'customer_error', 'third_party', 'fraud_or_scam', 'policy_or_product', 'communication', 'other'] as const;
+export type RootCause = (typeof ROOT_CAUSES)[number];
+export class TransitionTicketDto { @IsIn(TICKET_STATUSES) toStatus!: TicketStatus; @IsString() @Length(2, 500) reason!: string; @IsOptional() @IsIn(ROOT_CAUSES) rootCause?: RootCause; /** Required to resolve a complaint (the internal dispute resolution outcome). */ @IsOptional() @IsIn(['upheld', 'partially_upheld', 'not_upheld', 'withdrawn', 'resolved_by_agreement']) idrOutcome?: string; }
 export const ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'text/plain'] as const;
 export class CreateAttachmentDto {
   @IsString() @Length(1, 255) filename!: string;

@@ -8,7 +8,11 @@ import type { UserContext } from '../auth/user-context.js';
 import { LiveEventsService, type LiveTicket } from '../live/live-events.service.js';
 
 export const SLA_TIMER_ACTOR = 'system:sla-timer';
-const NEXT_SLA_STATUS_SQL = "CASE WHEN resolution_due_at <= now() THEN 'breached' WHEN first_response_due_at <= now() THEN 'first_response_overdue' ELSE 'running' END";
+/**
+ * SLA status from actual-or-now against each deadline: breached if resolution (or "now" while unresolved) is past due;
+ * first_response_overdue if the first customer response was (or still is) late; met once resolved in time; else running.
+ */
+export const NEXT_SLA_STATUS_SQL = "CASE WHEN COALESCE(resolved_at, now()) > resolution_due_at THEN 'breached' WHEN COALESCE(first_responded_at, now()) > first_response_due_at THEN 'first_response_overdue' WHEN resolved_at IS NOT NULL THEN 'met' ELSE 'running' END";
 
 export interface SlaWindow { policyKey: string; firstResponseDueAt: Date; resolutionDueAt: Date; }
 
@@ -28,13 +32,13 @@ export class SlaService {
     return this.db.transaction(async (client) => {
       const administrator = user.roles.includes('administrator');
       const result = administrator
-        ? await client.query<{ id: string; sla_status: string }>(`UPDATE tickets SET sla_status=CASE WHEN resolution_due_at <= now() THEN 'breached' WHEN first_response_due_at <= now() THEN 'first_response_overdue' ELSE 'running' END, updated_at=now()
+        ? await client.query<{ id: string; sla_status: string }>(`UPDATE tickets SET sla_status=${NEXT_SLA_STATUS_SQL}, updated_at=now()
             WHERE legal_entity=$1 AND country=$2 AND status NOT IN ('closed','cancelled')
-              AND sla_status IS DISTINCT FROM CASE WHEN resolution_due_at <= now() THEN 'breached' WHEN first_response_due_at <= now() THEN 'first_response_overdue' ELSE 'running' END
+              AND sla_status IS DISTINCT FROM ${NEXT_SLA_STATUS_SQL}
             RETURNING id,sla_status`, [user.legalEntity, user.country])
-        : await client.query<{ id: string; sla_status: string }>(`UPDATE tickets SET sla_status=CASE WHEN resolution_due_at <= now() THEN 'breached' WHEN first_response_due_at <= now() THEN 'first_response_overdue' ELSE 'running' END, updated_at=now()
+        : await client.query<{ id: string; sla_status: string }>(`UPDATE tickets SET sla_status=${NEXT_SLA_STATUS_SQL}, updated_at=now()
             WHERE legal_entity=$1 AND country=$2 AND queue = ANY($3::text[]) AND status NOT IN ('closed','cancelled')
-              AND sla_status IS DISTINCT FROM CASE WHEN resolution_due_at <= now() THEN 'breached' WHEN first_response_due_at <= now() THEN 'first_response_overdue' ELSE 'running' END
+              AND sla_status IS DISTINCT FROM ${NEXT_SLA_STATUS_SQL}
             RETURNING id,sla_status`, [user.legalEntity, user.country, user.queues]);
       const statuses: Record<string, number> = {};
       for (const row of result.rows) {
