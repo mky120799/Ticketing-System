@@ -227,6 +227,7 @@ describe('routing, escalation, intake and live events', () => {
     // 4. Cross-ticket search is scoped and filterable; the search itself is audited.
     const found = await app.inject({ method: 'GET', url: '/v1/audit/events?action=ticket.created&limit=5', headers: h(auditor) }); expect(found.statusCode).toBe(200);
     expect(found.json().events.length).toBeGreaterThan(0); expect(found.json().events.every((e: { action: string }) => e.action.startsWith('ticket.created'))).toBe(true);
+    const listViews = await app.inject({ method: 'GET', url: '/v1/audit/events?action=ticket.list_viewed&actor=smoke-sup7', headers: h(auditor) }); expect(listViews.json().events.length).toBe(1);
     expect((await app.inject({ method: 'GET', url: '/v1/audit/events', headers: h(sup) })).statusCode).toBe(403);
     expect((await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE action='audit.searched'")).rows[0].n).toBeGreaterThan(0);
   });

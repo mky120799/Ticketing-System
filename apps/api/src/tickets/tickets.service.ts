@@ -58,7 +58,7 @@ export class TicketsService {
   /** One audit event per list/search request recording who looked and which tickets were returned (opaque IDs, first 50). */
   private async auditListing(user: UserContext, action: 'ticket.list_viewed' | 'ticket.search_performed', correlationId: string, ids: string[], hadTerm = false): Promise<void> {
     if (process.env.AUDIT_LIST_VIEWS === 'false') return;
-    await this.db.transaction((client) => this.audit.write(client, { actorId: user.subject, action, targetType: 'ticket_list', targetId: 'list', correlationId, outcome: 'success', metadata: { resultCount: ids.length, ticketIds: ids.slice(0, 50).join(','), ...(action === 'ticket.search_performed' ? { hadSearchTerm: hadTerm } : {}) } }));
+    await this.db.transaction((client) => this.audit.write(client, { actorId: user.subject, action, targetType: 'ticket_list', targetId: `${user.legalEntity}:${user.country}`, correlationId, outcome: 'success', metadata: { resultCount: ids.length, ticketIds: ids.slice(0, 50).join(','), ...(action === 'ticket.search_performed' ? { hadSearchTerm: hadTerm } : {}) } }));
   }
 
   async list(user: UserContext, correlationId: string): Promise<unknown[]> {
