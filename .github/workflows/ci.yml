@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
       - name: Lint and render the Helm chart
         run: |
           helm lint deploy/helm/bank-case --set oidc.issuer=https://idp.example/realms/x --set oidc.jwksUri=https://idp.example/certs
