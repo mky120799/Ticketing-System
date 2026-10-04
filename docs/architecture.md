@@ -192,6 +192,10 @@ Add more channels and source systems, OpenSearch projections, customer portal/mo
 
 Only after measurable control effectiveness and human-review sign-off consider assistive automation. Any future AI capability must be bounded, explainable, non-authoritative, privacy-reviewed, and unable to approve, reveal, send, or close a case without an authorized human action.
 
+## 9a. Status against this plan (2026-10-03)
+
+Phase 1 is complete and Phase 2 is built as far as it can be without the bank's systems: the workflow definition layer (engine-agnostic, so a BPMN engine can be added without redesign), an in-application timer with the same rule tables a workflow engine would take over, the outbox with a verified Kafka publisher, encrypted-storage and malware-scan flows verified against S3-compatible storage and ClamAV, real email intake and delivery, a customer portal with a separate identity realm, and the operational material (metrics, alerts, runbooks, recovery and capacity plans). Phase 3 items delivered early: retention and legal holds, trends and a BI reporting feed, accessibility checks. What remains is listed in `production-readiness.md`.
+
 ## 10. Technology choices
 
 - React + TypeScript provides a typed, accessible operator UI and shared validation contracts.

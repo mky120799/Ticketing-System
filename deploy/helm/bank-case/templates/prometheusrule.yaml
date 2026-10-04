@@ -1,0 +1,9 @@
+{{- if .Values.metrics.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "bank-case.fullname" . }}
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+{{ .Files.Get "files/alert-rules.yaml" | indent 2 }}
+{{- end }}

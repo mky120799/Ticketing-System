@@ -50,7 +50,7 @@ export class IntakeService {
       if (!queueRow?.active) throw new ConflictException('Target queue is inactive');
       const priority = dto.priority ?? config.default_priority;
       const id = randomUUID(); const actor = `intake:${channel}`;
-      const window = await this.sla.calculate(client, priority);
+      const window = await this.sla.calculate(client, priority, new Date(), queueRow.country);
       await client.query(`INSERT INTO tickets (id,category,priority,sensitivity,queue,branch_code,department,legal_entity,country,subject,description,created_by,source_channel,sla_policy_key,first_response_due_at,resolution_due_at,sla_status)
         VALUES ($1,$2,$3,'standard',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'running')`, [id, category, priority, queue, config.branch_code, queueRow.department, queueRow.legal_entity, queueRow.country, dto.subject, dto.body, actor, channel, window.policyKey, window.firstResponseDueAt, window.resolutionDueAt]);
       await client.query('INSERT INTO ticket_references (id,ticket_id,reference_type,source_system,opaque_reference,masked_value) VALUES ($1,$2,$3,$4,$5,$6)', [randomUUID(), id, 'customer', channel, dto.senderReference, this.mask(dto.senderReference)]);

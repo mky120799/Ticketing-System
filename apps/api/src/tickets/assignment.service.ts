@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { AuditService } from '../audit/audit.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { OutboxService } from '../outbox/outbox.service.js';
 
 export const ASSIGNMENT_ACTOR = 'system:assignment-rules';
@@ -14,7 +15,7 @@ const OPEN_STATUS_SQL = "('resolved','closed','cancelled')";
  */
 @Injectable()
 export class AssignmentService {
-  constructor(private readonly audit: AuditService, private readonly outbox: OutboxService) {}
+  constructor(private readonly audit: AuditService, private readonly outbox: OutboxService, private readonly notifications: NotificationsService) {}
 
   async autoAssign(client: PoolClient, ticket: { id: string; queue: string; category: string; priority: string; status: string }, correlationId: string): Promise<string | null> {
     // Serialize assignment decisions per queue so concurrent creations cannot all pick the same "least loaded" member.
@@ -34,6 +35,8 @@ export class AssignmentService {
     await client.query('INSERT INTO ticket_status_history (id,ticket_id,from_status,to_status,reason,changed_by) VALUES ($1,$2,$3,$4,$5,$6)', [randomUUID(), ticket.id, ticket.status, 'assigned', `Auto-assigned by rule ${rule.rule_key} (${rule.strategy})`, ASSIGNMENT_ACTOR]);
     await this.audit.write(client, { actorId: ASSIGNMENT_ACTOR, action: 'ticket.auto_assigned', targetType: 'ticket', targetId: ticket.id, correlationId, outcome: 'success', metadata: { ruleKey: rule.rule_key, strategy: rule.strategy, queue: ticket.queue } });
     await this.outbox.enqueue(client, { eventType: 'ticket.assigned', aggregateType: 'ticket', aggregateId: ticket.id, correlationId, payload: { ticketId: ticket.id, queue: ticket.queue, assigneeId: member.user_id, mode: 'auto', ruleKey: rule.rule_key } });
+    const scope = (await client.query<{ legal_entity: string; country: string }>('SELECT legal_entity,country FROM case_queues WHERE queue_key=$1', [ticket.queue])).rows[0];
+    if (scope) await this.notifications.create(client, { user: member.user_id, legalEntity: scope.legal_entity, country: scope.country }, 'ticket_assigned', 'A ticket was assigned to you', ticket.id);
     return member.user_id;
   }
 }

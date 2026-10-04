@@ -14,6 +14,8 @@ export class ConfigurationController {
   constructor(private readonly configuration: CaseConfigurationService, private readonly routing: RoutingConfigurationService) {}
   @Get('queues') queues(@Req() request: FastifyRequest) { return this.configuration.queues(request.user!); }
   @Get('categories') categories(@Req() request: FastifyRequest) { return this.configuration.categories(request.user!); }
+  @Get('sla') slaPolicies(@Req() request: FastifyRequest) { return this.configuration.listSlaPolicies(request.user!); }
+  @Get('communication-templates/all') communicationTemplatesAdmin(@Req() request: FastifyRequest) { return this.configuration.listCommunicationTemplatesAdmin(request.user!); }
   @Get('communication-templates') communicationTemplates(@Req() request: FastifyRequest) { return this.configuration.communicationTemplates(request.user!); }
   @Put('queues/:queueKey') upsertQueue(@Req() request: FastifyRequest, @Param('queueKey') queueKey: string, @Body() dto: UpsertQueueDto) { return this.configuration.upsertQueue(request.user!, queueKey, dto, request.correlationId!); }
   @Put('categories/:categoryKey') upsertCategory(@Req() request: FastifyRequest, @Param('categoryKey') categoryKey: string, @Body() dto: UpsertCategoryDto) { return this.configuration.upsertCategory(request.user!, categoryKey, dto, request.correlationId!); }

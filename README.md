@@ -9,9 +9,11 @@ The design baseline, permission matrix, architecture boundaries, API strategy, p
 **Everything in containers (needs Docker):**
 
 ```bash
-docker compose --profile app up -d --build     # Postgres, Redis, Keycloak, migrations, API, web
-open http://localhost:5173                     # sign in as local-supervisor (password below)
-npm install && npm run intake:simulate --workspace=@bank-case/api   # simulate an incoming email
+docker compose --profile app up -d --build     # database, Keycloak (staff + customer realms), Kafka-compatible broker, object store,
+                                               # ClamAV, mail server, migrations, API, staff console, customer portal
+open http://localhost:5173                     # staff console: sign in as local-supervisor (password below)
+open http://localhost:5174                     # customer portal: sign in as local-customer
+npm install && npm run intake:simulate --workspace=@bank-case/api   # or send a real email to cases@bank.test (SMTP localhost:3025)
 ```
 
 **For development (hot reload):**
@@ -23,7 +25,9 @@ npm install && npm run intake:simulate --workspace=@bank-case/api   # simulate a
 
 If you ran an earlier version, recreate Keycloak to import the current realm: `docker compose up -d --force-recreate keycloak`.
 
-Tests: `npm test` (unit), `npm run test:e2e`, and `npm run test:integration --workspace=@bank-case/api` (needs a migrated, otherwise empty database). Deployment, security and onboarding guides: [`docs/deployment.md`](docs/deployment.md), [`docs/security.md`](docs/security.md), [`docs/bank-onboarding.md`](docs/bank-onboarding.md). How each feature was built: [`docs/implementation-log.md`](docs/implementation-log.md).
+**Tests.** `npm test` (33 unit tests); `npm run test:e2e` (API boundary); `npm run test:integration --workspace=@bank-case/api` (database integration; needs a migrated, otherwise empty database). Suites that need live services are switched on with environment variables: `STORAGE_TEST=1` (object store + ClamAV), `EMAIL_TEST=1` (mail server), `ROLES_TEST=1` (a superuser connection, to prove the restricted database account), `KAFKA_TEST_BROKERS=localhost:19092`; start the services with `docker compose --profile app up -d`. Browser tests with accessibility checks: `cd e2e && npm install && npx playwright install chromium && npx playwright test` (see `e2e/README.md`). Load test: `loadtest/` (see `docs/capacity.md`).
+
+**Documentation.** [`docs/project-status.md`](docs/project-status.md) (what is built), [`docs/production-readiness.md`](docs/production-readiness.md) (what a go-live still needs), [`docs/implementation-log.md`](docs/implementation-log.md) (how each feature was built and why), [`docs/deployment.md`](docs/deployment.md), [`docs/security.md`](docs/security.md), [`docs/bank-onboarding.md`](docs/bank-onboarding.md), [`docs/runbooks.md`](docs/runbooks.md), [`docs/disaster-recovery.md`](docs/disaster-recovery.md), [`docs/capacity.md`](docs/capacity.md), [`docs/events.md`](docs/events.md) (event catalogue), [`docs/user-guide.md`](docs/user-guide.md).
 
 Keycloak runs at `http://localhost:8080`. The development realm has `local-branch-agent`, `local-case-agent`, `local-case-agent-2`, `local-supervisor`, `local-auditor` and `local-admin`, all with password `local-dev-only-change-me`, plus an `intake-gateway` service client (secret `local-dev-only-intake-secret`). These credentials exist only in the disposable development realm and are never handled by the application; remove them before sharing an environment. Health checks: `GET /v1/health/live` and `GET /v1/health/ready`.
 
@@ -67,8 +71,6 @@ Keycloak runs at `http://localhost:8080`. The development realm has `local-branc
 
 ## What is and isn't done
 
-**Built and verified locally** (PostgreSQL 18, Docker, real Keycloak): ticket lifecycle with per-category workflows, RBAC and scoping, immutable audit, outbox dispatcher, live updates, SLA and regulatory clocks, complaints (ASIC RG 271 profile as data), assignment and escalation, intake channel stub, retention enforcement, subject-access export, dashboards and register export, hardened containers and a Helm chart.
+See [`docs/project-status.md`](docs/project-status.md) for the plain-language list and [`docs/production-readiness.md`](docs/production-readiness.md) for the prioritised go-live checklist (40 of 82 required/recommended items done; the remaining required items depend on the bank's environment, people or an external assessor).
 
-**Deliberately not in this repository** (needs the bank's environment): the bank IdP and gateway, a Camunda or other BPMN engine (workflows are data-driven and engine-agnostic; see `docs/implementation-log.md` entry 9), a Kafka cluster (a publisher exists but has not been run against a broker), real object storage and malware scanning, source-system adapters (core banking, CRM, cards, KYC, fraud), real notification providers, customer portal and mobile identity, SIEM and tracing endpoints.
-
-**Before production:** threat-model workshop and penetration test with the bank, accessibility audit, load and disaster-recovery tests, retention schedules approved, security and privacy sign-off. See [`docs/security.md`](docs/security.md) section 7 for the full list of known gaps.
+**In short.** Built and verified end to end against real services: case handling, configurable workflows and routing, SLA and regulatory clocks (complaints and privacy-correction requests), email and customer-portal intake, notifications and delivery, attachments with malware scanning, a tamper-evident and externally anchored audit trail with a restricted database account, hardened authentication, reporting feeds, runbooks, containers and a Helm chart. **Not in this repository** because it needs the bank: its identity provider, core-banking and CRM adapters, production bus/storage/KMS/SIEM, real SMS provider, a live-cluster install, and the assessments and sign-offs listed in the readiness document.

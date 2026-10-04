@@ -1,0 +1,20 @@
+# Keeps the pinned base-image digests, npm packages and CI actions current. Each update arrives as a pull request that runs the
+# full CI (tests, dependency audit, code and image scanning) before it can be merged.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 10
+  - package-ecosystem: docker
+    directory: /apps/api
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /apps/web
+    schedule: { interval: weekly }
+  - package-ecosystem: docker
+    directory: /apps/portal
+    schedule: { interval: weekly }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }

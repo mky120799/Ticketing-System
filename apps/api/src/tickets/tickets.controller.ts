@@ -1,5 +1,5 @@
-import { BadRequestException, Body, Controller, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, UseGuards } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { AuthGuard } from '../auth/auth.guard.js';
 import { AddNoteDto, ApprovalDecisionDto, ApprovalRequestDto, AssignTicketDto, AttachmentScanResultDto, CompleteAttachmentDto, CreateAttachmentDto, CreateCommunicationDto, CreateTicketDto, LinkTicketDto, SearchTicketsQuery, TransitionTicketDto, UpdateRetentionControlDto, UpdateTicketDto } from './ticket.dto.js';
 import { TicketsService } from './tickets.service.js';
@@ -9,7 +9,11 @@ import { TicketsService } from './tickets.service.js';
 export class TicketsController {
   constructor(private readonly tickets: TicketsService) {}
   @Post() create(@Req() request: FastifyRequest, @Headers('idempotency-key') key: string | undefined, @Body() dto: CreateTicketDto) { if (!key || key.length > 128) throw new BadRequestException('A valid Idempotency-Key header is required'); return this.tickets.create(request.user!, dto, key, request.correlationId!); }
-  @Get() list(@Req() request: FastifyRequest) { return this.tickets.list(request.user!, request.correlationId!); }
+  @Get() async list(@Req() request: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply, @Query('cursor') cursor?: string, @Query('limit') limit?: string) {
+    const page = await this.tickets.list(request.user!, request.correlationId!, cursor, limit ? Number(limit) : undefined);
+    if (page.nextCursor) reply.header('X-Next-Cursor', page.nextCursor);
+    return page.items;
+  }
   @Get('search') search(@Req() request: FastifyRequest, @Query() query: SearchTicketsQuery) { return this.tickets.search(request.user!, query, request.correlationId!); }
   @Get(':ticketId') get(@Req() request: FastifyRequest, @Param('ticketId') ticketId: string) { return this.tickets.get(request.user!, ticketId, request.correlationId!); }
   @Put(':ticketId/retention') updateRetention(@Req() request: FastifyRequest, @Param('ticketId') ticketId: string, @Body() dto: UpdateRetentionControlDto) { return this.tickets.updateRetentionControl(request.user!, ticketId, dto, request.correlationId!); }

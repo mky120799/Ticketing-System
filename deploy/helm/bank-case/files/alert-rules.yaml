@@ -1,0 +1,94 @@
+# Prometheus alerting rules for the case platform, matching docs/runbooks.md. Load directly into Prometheus, or enable the
+# chart option metrics.prometheusRule.enabled to ship the same rules as a PrometheusRule resource.
+groups:
+  - name: case-platform-integrity
+    rules:
+      - alert: AuditChainInvalid
+        expr: audit_chain_valid == 0
+        for: 0m
+        labels: { severity: critical }
+        annotations:
+          summary: Audit trail integrity check failed
+          description: The verifier found a broken link, altered event, missing anchored event or bad anchor signature. Treat as a security incident and follow the "Audit integrity failure" runbook. Do not modify the database.
+      - alert: AuditVerificationStale
+        expr: time() - audit_chain_last_verified_timestamp_seconds > 10800
+        for: 10m
+        labels: { severity: high }
+        annotations:
+          summary: Audit trail has not been verified for over 3 hours
+          description: The scheduler may have stopped. See the "Verification stopped" runbook.
+      - alert: AuditRuntimeRoleUnsafe
+        expr: audit_runtime_role_safe == 0
+        for: 5m
+        labels: { severity: high }
+        annotations:
+          summary: The API is connected to the database with an account that could alter the audit trail
+          description: Use the restricted account from infra/postgres/roles.sql. See the "Wrong database account" runbook.
+  - name: case-platform-delivery
+    rules:
+      - alert: DeadLetteredEvents
+        expr: outbox_events{status="dead_letter"} > 0
+        for: 15m
+        labels: { severity: high }
+        annotations:
+          summary: Integration events could not be delivered and are waiting for replay
+          description: Fix the cause (usually the event bus), then replay from Administration > Integration events.
+      - alert: OutboxBacklogGrowing
+        expr: delta(outbox_events{status="pending"}[10m]) > 0 and outbox_events{status="pending"} > 100
+        for: 10m
+        labels: { severity: medium }
+        annotations:
+          summary: Events are accumulating faster than they are published
+          description: See the "Events not leaving" runbook.
+      - alert: CustomerMessagesNotSending
+        expr: communications{status="queued"} > 0 and delta(communications{status="queued"}[15m]) >= 0
+        for: 15m
+        labels: { severity: medium }
+        annotations:
+          summary: Queued customer messages are not draining
+          description: Check SMTP / SMS gateway settings and the contact lookup. See the "Messages not sending" runbook.
+      - alert: CustomerMessagesFailing
+        expr: communications{status="failed"} > 0
+        for: 30m
+        labels: { severity: medium }
+        annotations:
+          summary: Customer messages have failed to send
+          description: Look at the failure codes (NO_CONTACT, DELIVERY_FAILED) in the audit trail and API log.
+      - alert: AttachmentScansStuck
+        expr: attachments_oldest_pending_scan_seconds > 900
+        for: 5m
+        labels: { severity: medium }
+        annotations:
+          summary: An uploaded attachment has waited over 15 minutes for a malware scan
+          description: The scanner may be down. Downloads stay blocked meanwhile. See the "Attachments stay pending scan" runbook.
+  - name: case-platform-service
+    rules:
+      - alert: ApiErrorRateHigh
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01
+        for: 10m
+        labels: { severity: high }
+        annotations:
+          summary: More than 1% of API requests are failing with server errors
+          description: Use the correlation ID in a failing response to find the cause. See the "Elevated errors" runbook.
+      - alert: ApiLatencyHigh
+        expr: histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 2
+        for: 10m
+        labels: { severity: medium }
+        annotations:
+          summary: 99th percentile API latency is above 2 seconds
+          description: Check database load and connection pool saturation.
+      - alert: ApiDown
+        expr: up{job=~".*bank-case.*api.*"} == 0
+        for: 3m
+        labels: { severity: critical }
+        annotations:
+          summary: The API is not being scraped or is down
+  - name: case-platform-business
+    rules:
+      - alert: ComplaintsPastFinalResponse
+        expr: tickets_open{sla_status="breached"} > 0
+        for: 1h
+        labels: { severity: business }
+        annotations:
+          summary: Open tickets have breached their resolution deadline
+          description: Review workload and escalation rules on the dashboard. Complaints approaching or past their regulatory deadline also appear as notifications to supervisors.

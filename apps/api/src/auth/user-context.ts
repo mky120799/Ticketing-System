@@ -11,6 +11,9 @@ export interface UserContext {
   serviceIdentity?: boolean;
   tokenId?: string;
   tokenExpiresAt?: number;
+  /** When the user last authenticated (epoch seconds) and how (`acr`), for step-up decisions. */
+  authTime?: number;
+  acr?: string;
 }
 
 declare module 'fastify' { interface FastifyRequest { user?: UserContext; correlationId?: string; } }

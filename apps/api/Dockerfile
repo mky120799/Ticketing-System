@@ -1,5 +1,5 @@
 # Build from the repository root:  docker build -f apps/api/Dockerfile -t bank-case-api .
-FROM node:22-alpine AS build
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS build
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
@@ -7,13 +7,13 @@ RUN npm ci --workspace=@bank-case/api --include-workspace-root
 COPY apps/api apps/api
 RUN npm run build --workspace=@bank-case/api
 
-FROM node:22-alpine AS deps
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS deps
 WORKDIR /repo
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/
 RUN npm ci --omit=dev --workspace=@bank-case/api --include-workspace-root && npm cache clean --force
 
-FROM node:22-alpine
+FROM node:22-alpine@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 ENV NODE_ENV=production
 WORKDIR /repo/apps/api
 COPY --from=deps /repo/node_modules /repo/node_modules

@@ -13,8 +13,8 @@ export function CompliancePanel({ user, ticket, roles, onChanged, onError }: { u
   const loadProfiles = () => { void getRegulatoryProfiles(user).then((list) => { setProfiles(list); setProfile(list[0]?.profileKey ?? ''); }).catch(() => undefined); };
   const status = ticket.regulatory_status ?? 'on_track';
   return <div className="activity">
-    <h3>Complaint and compliance</h3>
-    {ticket.is_complaint ? <>
+    <h3>{ticket.case_kind === 'privacy_request' ? 'Privacy request and compliance' : 'Complaint and compliance'}</h3>
+    {ticket.regulatory_profile ? <>
       <p><span className={`chip reg-${status}`}>{LABELS[status] ?? status}</span> {ticket.vulnerability_flag && <span className="chip reg-at_risk">vulnerable customer</span>} {ticket.systemic_issue && <span className="chip reg-at_risk">systemic issue</span>}</p>
       <small>Profile {ticket.regulatory_profile} · Acknowledge by {when(ticket.acknowledge_due_at)} · Final response by {when(ticket.final_response_due_at)}{ticket.idr_outcome ? ` · Outcome: ${ticket.idr_outcome.replace(/_/g, ' ')}` : ''}</small>
       <div className="row">

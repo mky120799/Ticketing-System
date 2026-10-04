@@ -42,8 +42,10 @@ export class WorkflowDefinitionService {
     if (row.allowed_roles && !row.allowed_roles.some((role) => roles.includes(role as CaseRole))) throw new ForbiddenException(`Only ${row.allowed_roles.join(' or ')} can move a ticket from ${from} to ${to}`);
   }
 
-  async nextStatuses(category: string, from: string, roles: CaseRole[]): Promise<string[]> {
-    const result = await this.db.query<{ to_status: string; allowed_roles: string[] | null }>(
+  async nextStatuses(category: string, from: string, roles: CaseRole[], client?: PoolClient): Promise<string[]> {
+    // Inside a transaction pass its client: asking the pool for a second connection while holding one can deadlock a busy pool.
+    const runner = (client ?? this.db) as { query: PgService['query'] };
+    const result = await runner.query<{ to_status: string; allowed_roles: string[] | null }>(
       `SELECT wt.to_status, wt.allowed_roles FROM workflow_transitions wt JOIN ticket_categories c ON c.workflow_key=wt.workflow_key JOIN workflow_definitions wd ON wd.workflow_key=wt.workflow_key
        WHERE c.category_key=$1 AND wd.active=true AND wt.from_status=$2 ORDER BY wt.to_status`, [category, from]);
     return result.rows.filter((row) => !row.allowed_roles || row.allowed_roles.some((role) => roles.includes(role as CaseRole))).map((row) => row.to_status);
@@ -62,10 +64,12 @@ export class WorkflowDefinitionService {
     if (!/^[a-z0-9][a-z0-9-]{1,59}$/.test(workflowKey)) throw new ConflictException('Workflow key is invalid');
     this.assertUsable(dto.transitions);
     return this.db.transaction(async (client) => {
+      const before = await this.audit.previous(client, 'workflow_definitions', 'workflow_key=$1', [workflowKey]);
+      const beforeTransitions = (await client.query<{ from_status: string; to_status: string }>('SELECT from_status,to_status FROM workflow_transitions WHERE workflow_key=$1 ORDER BY from_status,to_status', [workflowKey])).rows.map((t) => `${t.from_status}>${t.to_status}`).join(',').slice(0, 1200);
       await client.query(`INSERT INTO workflow_definitions (workflow_key,label,active,updated_by) VALUES ($1,$2,$3,$4) ON CONFLICT (workflow_key) DO UPDATE SET label=EXCLUDED.label, active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()`, [workflowKey, dto.label, dto.active, user.subject]);
       await client.query('DELETE FROM workflow_transitions WHERE workflow_key=$1', [workflowKey]);
       for (const t of dto.transitions) await client.query('INSERT INTO workflow_transitions (workflow_key,from_status,to_status,allowed_roles) VALUES ($1,$2,$3,$4)', [workflowKey, t.from, t.to, t.allowedRoles?.length ? t.allowedRoles : null]);
-      await this.audit.write(client, { actorId: user.subject, action: 'configuration.workflow_updated', targetType: 'workflow', targetId: workflowKey, correlationId, outcome: 'success', metadata: { transitionCount: dto.transitions.length, active: dto.active } });
+      await this.audit.write(client, { actorId: user.subject, action: 'configuration.workflow_updated', targetType: 'workflow', targetId: workflowKey, correlationId, outcome: 'success', metadata: { transitionCount: dto.transitions.length, active: dto.active, previous: before, previousTransitions: beforeTransitions } });
       await this.outbox.enqueue(client, { eventType: 'configuration.workflow_changed', aggregateType: 'workflow', aggregateId: workflowKey, correlationId, payload: { workflowKey, transitionCount: dto.transitions.length, active: dto.active } });
       return { workflowKey, label: dto.label, active: dto.active, transitions: dto.transitions };
     });

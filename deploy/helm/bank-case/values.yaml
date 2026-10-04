@@ -5,6 +5,7 @@ image:
   pullSecrets: []
   api: { repository: bank-case-api, tag: "0.1.0", pullPolicy: IfNotPresent }
   web: { repository: bank-case-web, tag: "0.1.0", pullPolicy: IfNotPresent }
+  portal: { repository: bank-case-portal, tag: "0.1.0", pullPolicy: IfNotPresent }
 
 # Public host and TLS. The ingress routes /v1 to the API and everything else to the web console on one host,
 # so the browser needs no CORS. Use your ingress class and certificate issuer.
@@ -22,9 +23,19 @@ oidc:
   jwksUri: ""           # https://idp.bank.example/realms/staff/protocol/openid-connect/certs
   webClientId: bank-case-web
 
+# Customer identity provider for the portal (a SEPARATE issuer and audience from staff; a token for one is rejected by the other).
+oidcPortal:
+  issuer: ""            # https://idp.bank.example/realms/customers  (leave empty to disable the portal API)
+  audience: bank-case-portal-api
+  jwksUri: ""
+  webClientId: bank-case-portal
+
 # Secrets are NEVER created from values by this chart. Create a Secret (Vault/External Secrets/Sealed Secrets) with
 # these keys and name it here:
-#   DATABASE_URL (required), REDIS_URL, METRICS_TOKEN, OBJECT_STORAGE_ACCESS_KEY_ID, OBJECT_STORAGE_SECRET_ACCESS_KEY
+#   DATABASE_URL (required), REDIS_URL, METRICS_TOKEN, OBJECT_STORAGE_ACCESS_KEY_ID, OBJECT_STORAGE_SECRET_ACCESS_KEY,
+#   SMTP_USER, SMTP_PASSWORD, IMAP_USER, IMAP_PASSWORD, EMAIL_REFERENCE_SECRET, CRM_CONTACT_TOKEN, SMS_GATEWAY_TOKEN,
+#   MIGRATION_DATABASE_URL (schema owner, used only by the migration job), AUTH_INTROSPECTION_CLIENT_ID, AUTH_INTROSPECTION_CLIENT_SECRET,
+#   ENTITLEMENT_TOKEN, AUDIT_ANCHOR_SIGNING_PRIVATE_KEY
 existingSecret: bank-case-secrets
 
 # Non-secret application settings (see apps/api/.env.example for the full list).
@@ -36,7 +47,23 @@ config:
   outbox: { dispatcherEnabled: true, publisher: log, kafkaBrokers: "", kafkaTopicPrefix: bank-case }
   workflowSchedulerEnabled: true
   retentionEnforcementEnabled: false # destructive: enable only after the bank approves retention schedules
-  objectStorage: { endpoint: "", bucket: "", region: ap-southeast-2, forcePathStyle: false, serverSideEncryption: aws:kms }
+  objectStorage: { endpoint: "", publicEndpoint: "", bucket: "", region: ap-southeast-2, forcePathStyle: false, serverSideEncryption: aws:kms }
+  clamav: { host: "", port: 3310 }                  # empty disables the attachment scan worker
+  email: { smtpHost: "", smtpPort: 587, smtpSecure: false, mailFrom: "", imapHost: "", imapPort: 993, imapSecure: true, autoAcknowledge: true, maxTicketsPerSenderPerHour: 5 }
+  contacts: { crmContactUrl: "", smsGatewayUrl: "" } # bank-controlled lookups; the platform keeps no customer contact data
+  portal: { maxRequestsPerHour: 10, maxMessagesPerHour: 30 }
+  auth:
+    allowedClients: ""                 # comma-separated client IDs allowed to call the API (azp); set in production
+    introspectionUrl: ""               # IdP token introspection endpoint; makes revocation effective within the cache window
+    introspectionCacheSeconds: 30
+    entitlementUrl: ""                 # optional central entitlement service
+    stepUpMaxAgeSeconds: 900           # login must be this recent for reveals, approvals, exports, subject access, holds (0 = off)
+    stepUpAcrValues: ""
+  audit:
+    requireRestrictedDbRole: true      # refuse to start if the DB account could alter the audit trail (see infra/postgres/roles.sql)
+    streamEnabled: false               # publish every audit event to the bus for the SIEM
+    streamIncludeMetadata: false
+    anchorPublicKey: ""                # PEM; the private key is a secret (AUDIT_ANCHOR_SIGNING_PRIVATE_KEY)
 
 api:
   replicas: 2
@@ -52,9 +79,19 @@ web:
   cspConnectSrc: "'self'"
   resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 128Mi } }
 
+portal:
+  enabled: true
+  host: portal.bank.example
+  replicas: 2
+  tls: { enabled: true, secretName: bank-case-portal-tls }
+  cspConnectSrc: "'self'"
+  resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 128Mi } }
+
 # Runs database migrations before install/upgrade as a Helm hook.
 migrations:
   enabled: true
+  # Migrations must run as the schema OWNER, the API as the restricted account. Put the owner's URL in the secret under this key.
+  secretKey: MIGRATION_DATABASE_URL
 
 networkPolicy:
   enabled: true
@@ -63,5 +100,6 @@ networkPolicy:
 
 metrics:
   serviceMonitor: { enabled: false, interval: 30s }   # requires the Prometheus Operator
+  prometheusRule: { enabled: false }                  # ships deploy/monitoring/alert-rules.yaml as a PrometheusRule
 
 serviceAccount: { create: true, annotations: {} }

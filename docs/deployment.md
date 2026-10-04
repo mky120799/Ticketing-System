@@ -69,3 +69,38 @@ The API accepts access tokens signed by the configured issuer, with audience `ba
 ## What is not verified here
 
 Container images, the compose stack, the migrations, Keycloak login and the API were run locally. The Helm chart was linted and rendered but not installed on a live cluster. Kafka publishing, object storage with a real bucket, and an enterprise IdP were not exercised.
+
+## Database accounts (required for production)
+
+Run two PostgreSQL accounts, created with `infra/postgres/roles.sql`:
+
+| Account | Used by | Can |
+|---|---|---|
+| `case_owner` | the migration job only (`MIGRATION_DATABASE_URL`) | own and change the schema |
+| `case_app` | the API (`DATABASE_URL`) | read and write case data; **only add and read audit events** |
+
+This makes the audit trail append-only even against a compromised application. Set `AUDIT_REQUIRE_RESTRICTED_DB_ROLE=true` (the chart default) so the API refuses to start under any other account, and alert on the `audit_runtime_role_safe` metric. The same file can grant a read-only `case_reporting` account for BI tools (see the reporting views).
+
+## Audit operations
+
+- **Verification** runs hourly (incremental) and daily (full). Alert on `audit_chain_valid == 0`, on a stale `audit_chain_last_verified_timestamp_seconds`, and on `audit_runtime_role_safe == 0`.
+- **Anchors** are published daily to the event bus and, if object storage is configured, as signed objects under `audit-anchors/`. Use a bucket with Object Lock or a SIEM the database administrators cannot alter. Generate signing keys with `node scripts/generate-anchor-keys.mjs`, keep the private key in the vault, and give the platform the public key to verify.
+- **Streaming to the SIEM:** `AUDIT_STREAM_ENABLED=true` publishes each audit event to the topic `<prefix>.audit`.
+- **Archiving old events:** run `scripts/archive-audit.mjs --through <sequence> --out <dir>` as the owner account; keep the produced `.jsonl` and `.manifest.json` in write-once storage. Never delete audit rows by hand; that is indistinguishable from tampering.
+- **After a restore:** `POST /v1/audit/verify?full=true`, then compare with the latest anchor held outside the database.
+
+## Local service map (docker compose)
+
+| Service | URL / port | Start with |
+|---|---|---|
+| Staff console | http://localhost:5173 | `--profile app` |
+| Customer portal | http://localhost:5174 | `--profile app` |
+| API | http://localhost:3000/v1 | `--profile app` |
+| Keycloak (staff and customer realms) | http://localhost:8080 | default |
+| PostgreSQL | localhost:5433 | default |
+| Kafka-compatible broker | localhost:19092 | `--profile kafka` |
+| Object storage (S3 API) | http://localhost:8333 | `--profile storage` |
+| ClamAV | localhost:3310 | `--profile storage` |
+| Mail server (SMTP 3025, IMAP 3143) | mailbox `cases` / `cases-secret` | `--profile mail` |
+
+Customer portal demo logins: `local-customer` and `local-customer-2` (password `local-dev-only-change-me`) in the separate customer realm.

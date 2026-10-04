@@ -9,11 +9,12 @@ export interface LiveTicket extends TicketPolicySubject { id: string; status: st
 
 /** What a browser receives: opaque ID, event kind, status. Never ticket content. */
 export interface LiveEventPayload { type: LiveEventType; ticketId: string; status: string; at: string; }
-export type LiveFrame = { event: 'ticket'; data: LiveEventPayload } | { event: 'resync'; data: Record<string, never> };
+export type LiveFrame = { event: 'ticket'; data: LiveEventPayload } | { event: 'notification'; data: Record<string, never> } | { event: 'resync'; data: Record<string, never> };
 
 interface Subscriber { user: UserContext; send: (frame: LiveFrame) => void; }
 /** Wire format on the Postgres channel: the public payload plus the scope used to filter it. */
 interface NotifyMessage { payload: LiveEventPayload; scope: TicketPolicySubject; previousScope?: TicketPolicySubject; }
+interface PersonMessage { kind: 'person'; user?: string; queue?: string; role?: string; legalEntity: string; country: string; }
 
 const CHANNEL = 'ticket_live';
 const MAX_STREAMS_PER_USER = 5;
@@ -43,6 +44,12 @@ export class LiveEventsService implements OnModuleInit, OnModuleDestroy {
     const { id, status } = ticket;
     const message: NotifyMessage = { payload: { type, ticketId: id, status, at: new Date().toISOString() }, scope: this.scopeOf(ticket) };
     if (previousQueue && previousQueue !== ticket.queue) message.previousScope = { ...message.scope, queue: previousQueue };
+    await client.query('SELECT pg_notify($1, $2)', [CHANNEL, JSON.stringify(message)]);
+  }
+
+  /** Tells connected recipients to refresh their inbox. Delivered after commit, like ticket events; carries no content. */
+  async notifyPerson(client: PoolClient, target: { user?: string; queue?: string; role?: string; legalEntity: string; country: string }): Promise<void> {
+    const message: PersonMessage = { kind: 'person', user: target.user, queue: target.queue, role: target.role, legalEntity: target.legalEntity, country: target.country };
     await client.query('SELECT pg_notify($1, $2)', [CHANNEL, JSON.stringify(message)]);
   }
 
@@ -98,8 +105,17 @@ export class LiveEventsService implements OnModuleInit, OnModuleDestroy {
   }
 
   private dispatch(raw: string): void {
-    let message: NotifyMessage;
-    try { message = JSON.parse(raw) as NotifyMessage; } catch { return; }
+    let parsed: NotifyMessage | PersonMessage;
+    try { parsed = JSON.parse(raw) as NotifyMessage | PersonMessage; } catch { return; }
+    if ('kind' in parsed && parsed.kind === 'person') {
+      for (const subscriber of this.subscribers) {
+        const u = subscriber.user;
+        const mine = parsed.user ? u.subject === parsed.user : Boolean(parsed.queue && parsed.role && u.queues.includes(parsed.queue) && u.roles.includes(parsed.role as UserContext['roles'][number]) && u.legalEntity === parsed.legalEntity && u.country === parsed.country);
+        if (mine) this.safeSend(subscriber, { event: 'notification', data: {} });
+      }
+      return;
+    }
+    const message = parsed as NotifyMessage;
     for (const subscriber of this.subscribers) {
       if (this.canSee(subscriber.user, message.scope) || (message.previousScope && this.canSee(subscriber.user, message.previousScope))) this.safeSend(subscriber, { event: 'ticket', data: message.payload });
     }

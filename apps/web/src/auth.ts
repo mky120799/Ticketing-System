@@ -9,8 +9,10 @@ if (!authority || !clientId) throw new Error('OIDC authority and client ID must 
 export const userManager = new UserManager({
   authority, client_id: clientId, redirect_uri: `${window.location.origin}/`, post_logout_redirect_uri: `${window.location.origin}/`,
   response_type: 'code', scope: 'openid profile', userStore: new WebStorageStateStore({ store: window.sessionStorage }),
-  automaticSilentRenew: false, monitorSession: true
+  automaticSilentRenew: true, monitorSession: true
 });
 export const signIn = (): Promise<void> => userManager.signinRedirect();
 export const signOut = (): Promise<void> => userManager.signoutRedirect();
+/** Step-up: ask the identity provider for a fresh login (and, if it supports it, a stronger one) before a sensitive action. */
+export const reauthenticate = (): Promise<void> => userManager.signinRedirect({ max_age: 0 });
 export const completeSignIn = async (): Promise<User | null> => (await userManager.signinCallback()) ?? null;

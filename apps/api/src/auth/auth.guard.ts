@@ -1,6 +1,8 @@
 import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import type { FastifyRequest } from 'fastify';
+import { requestContext } from '../audit/request-context.js';
+import { assertAllowedClient, assertTokenActive, lookupEntitlements, type EntitlementOverride } from './token-checks.js';
 import type { CaseRole, UserContext } from './user-context.js';
 
 const ROLES: CaseRole[] = ['branch-agent', 'call-center-agent', 'case-agent', 'supervisor', 'auditor', 'administrator', 'attachment-scanner', 'integration-reconciler', 'notification-provider', 'intake-gateway'];
@@ -18,8 +20,11 @@ export class AuthGuard implements CanActivate {
     if (!authorization?.startsWith('Bearer ')) throw new UnauthorizedException('Missing bearer access token');
     if (!this.issuer || !this.audience) throw new UnauthorizedException('OIDC validation is not configured');
     try {
-      const { payload } = await jwtVerify(authorization.slice(7), this.jwks, { issuer: this.issuer, audience: this.audience });
-      request.user = this.toUserContext(payload);
+      const { payload } = await jwtVerify(authorization.slice(7), this.jwks, { issuer: this.issuer, audience: this.audience, algorithms: ['RS256', 'ES256', 'PS256'] });
+      assertAllowedClient(payload);
+      await assertTokenActive(authorization.slice(7));
+      request.user = this.toUserContext(payload, await lookupEntitlements(typeof payload.sub === 'string' ? payload.sub : ''));
+      const context = requestContext.getStore(); if (context) { context.tokenId = request.user.tokenId; context.acr = request.user.acr; context.authenticatedAt = request.user.authTime; }
       request.correlationId = this.headerValue(request.headers['x-correlation-id']) ?? crypto.randomUUID();
       return true;
     } catch {
@@ -27,19 +32,20 @@ export class AuthGuard implements CanActivate {
     }
   }
 
-  private toUserContext(payload: JWTPayload): UserContext {
+  private toUserContext(payload: JWTPayload, override: EntitlementOverride | null): UserContext {
     if (typeof payload.sub !== 'string') throw new UnauthorizedException('Token subject is missing');
-    const roleClaims = Array.isArray(payload.roles) ? payload.roles : (payload.realm_access as { roles?: unknown[] } | undefined)?.roles ?? [];
+    const roleClaims = override?.roles ?? (Array.isArray(payload.roles) ? payload.roles : (payload.realm_access as { roles?: unknown[] } | undefined)?.roles ?? []);
     const roles = roleClaims.filter((role): role is CaseRole => typeof role === 'string' && ROLES.includes(role as CaseRole));
-    const branch = this.stringClaim(payload, 'branch');
-    const queues = Array.isArray(payload.queues) ? payload.queues.filter((queue): queue is string => typeof queue === 'string') : [];
-    const department = this.stringClaim(payload, 'department');
-    const legalEntity = this.stringClaim(payload, 'legal_entity');
-    const country = this.stringClaim(payload, 'country');
+    const branch = override?.branch ?? this.stringClaim(payload, 'branch');
+    const queueClaim = override?.queues ?? (Array.isArray(payload.queues) ? payload.queues : []);
+    const queues = queueClaim.filter((queue): queue is string => typeof queue === 'string');
+    const department = override?.department ?? this.stringClaim(payload, 'department');
+    const legalEntity = override?.legal_entity ?? this.stringClaim(payload, 'legal_entity');
+    const country = override?.country ?? this.stringClaim(payload, 'country');
     if (!roles.length) throw new UnauthorizedException('Required authorization claims are missing');
     const serviceIdentity = roles.some((role) => SERVICE_ROLES.includes(role));
     if (!serviceIdentity && (!branch || !department || !legalEntity || !country)) throw new UnauthorizedException('Required authorization claims are missing');
-    return { subject: payload.sub, roles, branch, queues, department, legalEntity, country, serviceIdentity, tokenId: typeof payload.jti === 'string' ? payload.jti : undefined, tokenExpiresAt: typeof payload.exp === 'number' ? payload.exp : undefined };
+    return { subject: payload.sub, roles, branch, queues, department, legalEntity, country, serviceIdentity, tokenId: typeof payload.jti === 'string' ? payload.jti : undefined, tokenExpiresAt: typeof payload.exp === 'number' ? payload.exp : undefined, authTime: typeof payload.auth_time === 'number' ? payload.auth_time : undefined, acr: typeof payload.acr === 'string' ? payload.acr : undefined };
   }
 
   private stringClaim(payload: JWTPayload, claim: string): string { return typeof payload[claim] === 'string' ? payload[claim] : ''; }

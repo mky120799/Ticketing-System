@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { PgService } from '../database/pg.service.js';
 import { SlaService } from '../tickets/sla.service.js';
 import { AuditIntegrityService } from '../audit/audit-integrity.service.js';
+import { ReportExportService } from '../operations/report-export.service.js';
 import { RetentionService } from '../retention/retention.service.js';
 import { ComplianceService } from '../compliance/compliance.service.js';
 import { EscalationService } from './escalation.service.js';
@@ -21,8 +22,8 @@ export class WorkflowScheduler implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
 
-  constructor(private readonly db: PgService, private readonly sla: SlaService, private readonly escalation: EscalationService, private readonly compliance: ComplianceService, private readonly retention: RetentionService, private readonly auditIntegrity: AuditIntegrityService) {}
-  private lastRetentionRun = 0; private lastAuditVerify = 0; private lastAuditAnchor = 0;
+  constructor(private readonly db: PgService, private readonly sla: SlaService, private readonly escalation: EscalationService, private readonly compliance: ComplianceService, private readonly retention: RetentionService, private readonly auditIntegrity: AuditIntegrityService, private readonly reports: ReportExportService) {}
+  private lastRetentionRun = 0; private lastAuditVerify = 0; private lastAuditAnchor = 0; private lastReportExport = 0;
 
   onModuleInit(): void {
     if (process.env.WORKFLOW_SCHEDULER_ENABLED !== 'true' || !process.env.DATABASE_URL) return;
@@ -50,6 +51,7 @@ export class WorkflowScheduler implements OnModuleInit, OnModuleDestroy {
         if (Date.now() - this.lastAuditAnchor > 86_400_000) { this.lastAuditAnchor = Date.now(); this.lastAuditVerify = Date.now(); const anchored = await this.auditIntegrity.anchor(correlationId); auditStatus = anchored.anchored ? 'anchored' : 'unchanged'; }
         else if (Date.now() - this.lastAuditVerify > 3_600_000) { this.lastAuditVerify = Date.now(); auditStatus = (await this.auditIntegrity.verify()).status; }
       }
+      if (process.env.REPORT_EXPORT_ENABLED === 'true' && Date.now() - this.lastReportExport > 86_400_000) { this.lastReportExport = Date.now(); await this.reports.runOnce(); }
       return { slaUpdated: sla.updated, regulatoryUpdated: regulatory.updated, escalated: escalation.escalated, redacted, auditStatus };
     });
   }

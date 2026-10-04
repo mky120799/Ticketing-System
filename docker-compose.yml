@@ -28,25 +28,62 @@ services:
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: local-admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: local-admin-change-me
+      # Fixed public address so the token issuer is the same whichever host a request arrives on (browser vs container).
+      KC_HOSTNAME: http://localhost:8080
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
     ports: ["8080:8080"]
     volumes:
       - ./infra/keycloak:/opt/keycloak/data/import:ro
 
   # Local Kafka-compatible broker (docker compose --profile kafka up -d redpanda).
-  # Two listeners: containers use redpanda:29092, the host uses localhost:9092.
+  # Two listeners: containers use redpanda:29092, the host uses localhost:19092.
   redpanda:
     image: docker.redpanda.com/redpandadata/redpanda:v24.2.7
     profiles: ["kafka", "app"]
     command: >
       redpanda start --smp 1 --memory 512M --overprovisioned --node-id 0
-      --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092
-      --advertise-kafka-addr internal://redpanda:29092,external://localhost:9092
-    ports: ["9092:9092"]
+      --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:19092
+      --advertise-kafka-addr internal://redpanda:29092,external://localhost:19092
+    ports: ["19092:19092"]
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # S3-compatible object storage for development (docker compose --profile storage up -d). SeaweedFS is used because it
+  # is freely pullable and implements the S3 API incl. presigned URLs; production uses the bank's object store.
+  objectstore:
+    image: chrislusf/seaweedfs:latest
+    profiles: ["storage", "app"]
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json -ip=objectstore
+    ports: ["8333:8333"]
+    volumes: ["./infra/seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro", "objectstore_data:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9333/cluster/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  # Malware scanner (the Debian image has an arm64 build). The first start loads signatures and can take a few minutes.
+  clamav:
+    image: clamav/clamav-debian:stable
+    profiles: ["storage", "app"]
+    ports: ["3310:3310"]
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | nc -w 3 127.0.0.1 3310 | grep -q PONG"]
+      interval: 15s
+      timeout: 10s
+      retries: 40
+      start_period: 60s
+
+  # Development mail server with SMTP and IMAP (docker compose --profile mail up -d mail). Mailbox: cases / cases-secret.
+  mail:
+    image: greenmail/standalone:2.1.2
+    profiles: ["mail", "app"]
+    environment:
+      JAVA_OPTS: "-Dgreenmail.users=cases:cases-secret@bank.test"
+    ports: ["3025:3025", "3143:3143"]
 
   # ---- Full application (docker compose --profile app up -d --build) ----
   migrate:
@@ -66,15 +103,44 @@ services:
     cap_drop: ["ALL"]
     environment:
       PORT: "3000"
+      RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-600}"   # raise it when load testing: RATE_LIMIT_PER_MINUTE=1000000 docker compose up -d api
+      # The local stack runs in production mode with development settings (public demo secrets, local identity provider).
+      ALLOW_DEV_SETTINGS: "true"
       DATABASE_URL: "postgresql://case_user:case_password@postgres:5432/case_platform"
       REDIS_URL: "redis://redis:6379"
-      CORS_ORIGIN: "http://localhost:5173"
+      CORS_ORIGIN: "http://localhost:5173,http://localhost:5174"
+      PORTAL_OIDC_ISSUER: "http://localhost:8080/realms/bank-case-customers-dev"
+      PORTAL_OIDC_AUDIENCE: "bank-case-portal-api"
+      PORTAL_OIDC_JWKS_URI: "http://keycloak:8080/realms/bank-case-customers-dev/protocol/openid-connect/certs"
       # The issuer must equal the URL browsers use; the API fetches keys over the compose network.
       OIDC_ISSUER: "http://localhost:8080/realms/bank-case-dev"
       OIDC_AUDIENCE: "bank-case-api"
       OIDC_JWKS_URI: "http://keycloak:8080/realms/bank-case-dev/protocol/openid-connect/certs"
       OUTBOX_DISPATCHER_ENABLED: "true"
       OUTBOX_PUBLISHER: "kafka"
+      OBJECT_STORAGE_ENDPOINT: "http://objectstore:8333"
+      OBJECT_STORAGE_PUBLIC_ENDPOINT: "http://localhost:8333"
+      OBJECT_STORAGE_BUCKET: "bank-case-attachments"
+      OBJECT_STORAGE_CREATE_BUCKET: "true"
+      OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "local-s3"
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: "local-s3-change-me"
+      CLAMAV_HOST: "clamav"
+      AUTH_ALLOWED_CLIENTS: "bank-case-web,intake-gateway"
+      AUTH_INTROSPECTION_URL: "http://keycloak:8080/realms/bank-case-dev/protocol/openid-connect/token/introspect"
+      AUTH_INTROSPECTION_CLIENT_ID: "bank-case-api"
+      AUTH_INTROSPECTION_CLIENT_SECRET: "local-dev-only-api-introspection-secret"
+      AUTH_INTROSPECTION_CACHE_SECONDS: "5"
+      STEP_UP_MAX_AGE_SECONDS: "3600"
+      SMTP_HOST: "mail"
+      SMTP_PORT: "3025"
+      MAIL_FROM: "cases@bank.test"
+      IMAP_HOST: "mail"
+      IMAP_PORT: "3143"
+      IMAP_SECURE: "false"
+      IMAP_USER: "cases"
+      IMAP_PASSWORD: "cases-secret"
+      EMAIL_REFERENCE_SECRET: "local-dev-only-email-pseudonym-key"
       KAFKA_BROKERS: "redpanda:29092"
       WORKFLOW_SCHEDULER_ENABLED: "true"
       WORKFLOW_TICK_MS: "30000"
@@ -82,6 +148,9 @@ services:
       migrate: { condition: service_completed_successfully }
       redis: { condition: service_healthy }
       redpanda: { condition: service_healthy }
+      objectstore: { condition: service_healthy }
+      clamav: { condition: service_started }
+      mail: { condition: service_started }
 
   web:
     profiles: ["app"]
@@ -97,8 +166,26 @@ services:
       API_URL: "http://localhost:3000/v1"
       OIDC_AUTHORITY: "http://localhost:8080/realms/bank-case-dev"
       OIDC_CLIENT_ID: "bank-case-web"
+      CSP_CONNECT_SRC: "'self' http://localhost:3000 http://localhost:8080 http://localhost:8333"
+    depends_on: [api]
+
+  portal:
+    profiles: ["app"]
+    build: { context: ., dockerfile: apps/portal/Dockerfile }
+    ports: ["5174:8080"]
+    read_only: true
+    cap_drop: ["ALL"]
+    tmpfs:
+      - /tmp:uid=101,gid=101
+      - /var/cache/nginx:uid=101,gid=101
+      - /etc/nginx/conf.d:uid=101,gid=101
+    environment:
+      API_URL: "http://localhost:3000/v1"
+      OIDC_AUTHORITY: "http://localhost:8080/realms/bank-case-customers-dev"
+      OIDC_CLIENT_ID: "bank-case-portal"
       CSP_CONNECT_SRC: "'self' http://localhost:3000 http://localhost:8080"
     depends_on: [api]
 
 volumes:
   postgres_data:
+  objectstore_data:

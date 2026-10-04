@@ -1,0 +1,1 @@
+{ "name": "@bank-case/loadtest", "private": true, "version": "0.1.0", "type": "module", "scripts": { "test": "node run.mjs" }, "devDependencies": { "autocannon": "^8.0.0" } }

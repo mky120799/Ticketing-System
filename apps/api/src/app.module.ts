@@ -13,10 +13,14 @@ import { IntegrationModule } from './integrations/integration.module.js';
 import { CacheModule } from './cache/cache.module.js';
 import { IntakeModule } from './intake/intake.module.js';
 import { ComplianceModule } from './compliance/compliance.module.js';
+import { NotificationsModule } from './notifications/notifications.module.js';
+import { PortalModule } from './portal/portal.module.js';
+import { OperationsModule } from './operations/operations.module.js';
+import { EmailModule } from './email/email.module.js';
 import { MetricsModule } from './metrics/metrics.module.js';
 import { WorkflowModule } from './workflow/workflow.module.js';
 import { LiveModule } from './live/live.module.js';
 import { StorageModule } from './storage/storage.module.js';
 
-@Module({ imports: [DatabaseModule, CacheModule, StorageModule, AuditModule, AuthModule, TicketsModule, DashboardModule, OutboxModule, ConfigurationModule, IntegrationModule, LiveModule, WorkflowModule, IntakeModule, ComplianceModule, MetricsModule], controllers: [HealthController], providers: [{ provide: APP_INTERCEPTOR, useClass: DeniedAuthorizationInterceptor }] })
+@Module({ imports: [DatabaseModule, CacheModule, StorageModule, AuditModule, AuthModule, TicketsModule, DashboardModule, OutboxModule, ConfigurationModule, IntegrationModule, LiveModule, WorkflowModule, IntakeModule, ComplianceModule, MetricsModule, NotificationsModule, EmailModule, PortalModule, OperationsModule], controllers: [HealthController], providers: [{ provide: APP_INTERCEPTOR, useClass: DeniedAuthorizationInterceptor }] })
 export class AppModule {}

@@ -119,6 +119,15 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "bank-case-api",
+      "name": "Case API (token introspection only)",
+      "publicClient": false,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "secret": "local-dev-only-api-introspection-secret"
     }
   ],
   "roles": {

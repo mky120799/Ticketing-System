@@ -61,7 +61,7 @@ export class AuditController {
   }
 
   private async report(request: FastifyRequest, ticketId: string, limitValue: string | undefined, auditAction: 'audit.report_viewed' | 'audit.exported') {
-    const user = request.user!; this.policy.assertPermission(user, 'audit:read');
+    const user = request.user!; this.policy.assertPermission(user, 'audit:read'); if (auditAction === 'audit.exported') this.policy.assertStepUp(user, 'export an audit report');
     const ticket = await this.db.query<TicketPolicySubject>('SELECT queue,branch_code,department,legal_entity,country,sensitivity,created_by,assigned_to FROM tickets WHERE id=$1', [ticketId]);
     if (!ticket.rows[0]) return { events: [] };
     this.policy.assertTicketAccess(user, ticket.rows[0], 'ticket:read');

@@ -1,0 +1,96 @@
+{{- if .Values.portal.enabled }}
+{{- $ctx := dict "root" . "component" "portal" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bank-case.fullname" . }}-portal
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+    app.kubernetes.io/component: portal
+spec:
+  replicas: {{ .Values.portal.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector:
+    matchLabels: {{- include "bank-case.selector" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "bank-case.selector" $ctx | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "bank-case.fullname" . }}
+      automountServiceAccountToken: false
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- include "bank-case.podSecurity" (dict "user" 101) | nindent 6 }}
+      containers:
+        - name: portal
+          image: {{ include "bank-case.image" (dict "root" . "image" .Values.image.portal) }}
+          imagePullPolicy: {{ .Values.image.portal.pullPolicy }}
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            # The portal is on its own host, so it calls the API on the staff host's /v1 path.
+            - { name: API_URL, value: {{ printf "https://%s/v1" .Values.ingress.host | quote }} }
+            - { name: OIDC_AUTHORITY, value: {{ .Values.oidcPortal.issuer | quote }} }
+            - { name: OIDC_CLIENT_ID, value: {{ .Values.oidcPortal.webClientId | quote }} }
+            - { name: CSP_CONNECT_SRC, value: {{ printf "%s https://%s" .Values.portal.cspConnectSrc .Values.ingress.host | quote }} }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 20 }
+          resources: {{- toYaml .Values.portal.resources | nindent 12 }}
+          {{- include "bank-case.containerSecurity" . | nindent 10 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
+      volumes:
+        - { name: tmp, emptyDir: { sizeLimit: 16Mi } }
+        - { name: nginx-cache, emptyDir: { sizeLimit: 64Mi } }
+        - { name: nginx-conf, emptyDir: { sizeLimit: 1Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bank-case.fullname" . }}-portal
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  selector: {{- include "bank-case.selector" $ctx | nindent 4 }}
+  ports: [{ name: http, port: 80, targetPort: http }]
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "bank-case.fullname" . }}-portal
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  {{- if .Values.portal.tls.enabled }}
+  tls: [{ hosts: [{{ .Values.portal.host | quote }}], secretName: {{ .Values.portal.tls.secretName }} }]
+  {{- end }}
+  rules:
+    - host: {{ .Values.portal.host | quote }}
+      http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: {{ include "bank-case.fullname" . }}-portal, port: { name: http } } } }
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "bank-case.fullname" . }}-portal
+  labels: {{- include "bank-case.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "bank-case.selector" $ctx | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {{- toYaml .Values.networkPolicy.ingressNamespaceLabels | nindent 14 }}
+      ports: [{ port: 8080, protocol: TCP }]
+{{- end }}
+{{- end }}

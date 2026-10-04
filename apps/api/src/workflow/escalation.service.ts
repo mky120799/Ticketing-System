@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { AuditService } from '../audit/audit.service.js';
 import { PgService } from '../database/pg.service.js';
 import { LiveEventsService, type LiveTicket } from '../live/live-events.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { OutboxService } from '../outbox/outbox.service.js';
 
 export const ESCALATION_ACTOR = 'system:escalation';
@@ -10,10 +11,10 @@ const PRIORITY_STEP: Record<string, string> = { low: 'normal', normal: 'high', h
 // First response = the first customer-facing action (customer note, queued communication, pending-customer or resolve).
 const TRIGGER_SQL: Record<string, string> = {
   first_response_overdue: "t.status NOT IN ('resolved','closed','cancelled') AND t.first_responded_at IS NULL AND t.first_response_due_at <= now()",
-  regulatory_ack_overdue: "t.is_complaint=true AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status='ack_overdue'",
-  regulatory_at_risk: "t.is_complaint=true AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status IN ('at_risk','final_response_overdue')",
-  regulatory_breached: "t.is_complaint=true AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status='final_response_overdue'",
-  breached: "t.status NOT IN ('resolved','closed','cancelled') AND t.resolution_due_at <= now()"
+  regulatory_ack_overdue: "t.regulatory_profile IS NOT NULL AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status='ack_overdue'",
+  regulatory_at_risk: "t.regulatory_profile IS NOT NULL AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status IN ('at_risk','final_response_overdue')",
+  regulatory_breached: "t.regulatory_profile IS NOT NULL AND t.status NOT IN ('resolved','closed','cancelled') AND t.regulatory_status='final_response_overdue'",
+  breached: "t.status NOT IN ('resolved','closed','cancelled') AND t.sla_paused_at IS NULL AND t.resolution_due_at <= now()"
 };
 const BATCH_PER_RULE = 100;
 
@@ -26,7 +27,7 @@ interface Rule { rule_key: string; queue_key: string; trigger: string; escalate_
  */
 @Injectable()
 export class EscalationService {
-  constructor(private readonly db: PgService, private readonly audit: AuditService, private readonly outbox: OutboxService, private readonly live: LiveEventsService) {}
+  constructor(private readonly db: PgService, private readonly audit: AuditService, private readonly outbox: OutboxService, private readonly live: LiveEventsService, private readonly notifications: NotificationsService) {}
 
   async run(correlationId: string): Promise<{ escalated: number }> {
     const rules = (await this.db.query<Rule>('SELECT rule_key,queue_key,trigger,escalate_to_queue,raise_priority FROM escalation_rules WHERE active=true ORDER BY rule_key')).rows;
@@ -54,6 +55,8 @@ export class EscalationService {
       await this.audit.write(client, { actorId: ESCALATION_ACTOR, action: 'ticket.escalated', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { ruleKey: rule.rule_key, trigger: rule.trigger, fromQueue: rule.queue_key, toQueue: rule.escalate_to_queue, priority } });
       await this.outbox.enqueue(client, { eventType: 'ticket.escalated', aggregateType: 'ticket', aggregateId: ticketId, correlationId, payload: { ticketId, ruleKey: rule.rule_key, trigger: rule.trigger, fromQueue: rule.queue_key, toQueue: rule.escalate_to_queue, priority } });
       await this.live.notify(client, 'ticket.escalated', updated, rule.queue_key);
+      await this.notifications.ticketAttention(client, updated as unknown as { id: string; queue: string; assigned_to: string | null; legal_entity: string; country: string }, 'ticket_escalated', 'A ticket was escalated to your queue', { assignee: false, supervisors: true });
+      if (ticket.assigned_to) await this.notifications.create(client, { user: ticket.assigned_to, legalEntity: ticket.legal_entity, country: ticket.country }, 'ticket_escalated', 'A ticket you were working was escalated', ticketId);
       return true;
     });
   }

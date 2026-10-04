@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsUUID, Length, Matches, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsDateString, IsISO8601, IsIn, IsInt, IsNotEmpty, IsNumber, IsObject, IsOptional, IsString, IsUUID, Length, Matches, Max, Min, ValidateNested } from 'class-validator';
 
 const PRIORITIES = ['low', 'normal', 'high', 'critical'] as const;
 const SENSITIVITIES = ['standard', 'confidential', 'restricted'] as const;
@@ -29,9 +29,11 @@ export class UpdateTicketDto {
   @IsOptional() @IsIn(PRIORITIES) priority?: (typeof PRIORITIES)[number];
   @IsOptional() @IsString() @Length(3, 10000) description?: string;
   @IsOptional() @IsObject() customFields?: Record<string, string | number | boolean | null>;
+  /** Optimistic concurrency: the `updatedAt` the caller last saw; a mismatch returns 409. */
+  @IsOptional() @IsISO8601() expectedUpdatedAt?: string;
 }
 
-export class AssignTicketDto { @IsString() @Length(2, 80) queue!: string; @IsOptional() @IsString() @Length(3, 160) assigneeId?: string; }
+export class AssignTicketDto { @IsString() @Length(2, 80) queue!: string; @IsOptional() @IsString() @Length(3, 160) assigneeId?: string; /** Optimistic concurrency: the `updatedAt` the caller last saw; a mismatch returns 409. */ @IsOptional() @IsISO8601() expectedUpdatedAt?: string; }
 export class ApprovalRequestDto { @IsString() @IsNotEmpty() @Length(2, 80) actionType!: string; }
 export class ApprovalDecisionDto { @IsIn(['approved', 'rejected']) decision!: 'approved' | 'rejected'; }
 export const TICKET_STATUSES = ['submitted', 'triage', 'assigned', 'in_progress', 'pending_customer', 'pending_external', 'pending_approval', 'escalated', 'resolved', 'closed', 'reopened', 'cancelled'] as const;
@@ -39,7 +41,7 @@ export type TicketStatus = (typeof TICKET_STATUSES)[number];
 export class AddNoteDto { @IsIn(['internal', 'customer']) visibility!: 'internal' | 'customer'; @IsString() @Length(1, 10000) body!: string; }
 export const ROOT_CAUSES = ['process_gap', 'system_error', 'staff_error', 'customer_error', 'third_party', 'fraud_or_scam', 'policy_or_product', 'communication', 'other'] as const;
 export type RootCause = (typeof ROOT_CAUSES)[number];
-export class TransitionTicketDto { @IsIn(TICKET_STATUSES) toStatus!: TicketStatus; @IsString() @Length(2, 500) reason!: string; @IsOptional() @IsIn(ROOT_CAUSES) rootCause?: RootCause; /** Required to resolve a complaint (the internal dispute resolution outcome). */ @IsOptional() @IsIn(['upheld', 'partially_upheld', 'not_upheld', 'withdrawn', 'resolved_by_agreement']) idrOutcome?: string; }
+export class TransitionTicketDto { @IsIn(TICKET_STATUSES) toStatus!: TicketStatus; @IsString() @Length(2, 500) reason!: string; @IsOptional() @IsISO8601() expectedUpdatedAt?: string; @IsOptional() @IsIn(ROOT_CAUSES) rootCause?: RootCause; /** Required to resolve a complaint (the internal dispute resolution outcome). */ @IsOptional() @IsIn(['upheld', 'partially_upheld', 'not_upheld', 'withdrawn', 'resolved_by_agreement', 'corrected', 'corrected_with_statement', 'refused_with_reasons']) idrOutcome?: string; }
 export const ATTACHMENT_CONTENT_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'text/plain'] as const;
 export class CreateAttachmentDto {
   @IsString() @Length(1, 255) filename!: string;

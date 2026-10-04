@@ -1,4 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
+import { assertStepUp } from './token-checks.js';
 import type { UserContext } from './user-context.js';
 
 export type Permission = 'ticket:create' | 'ticket:read' | 'ticket:update' | 'ticket:assign' | 'ticket:approve' | 'ticket:reveal' | 'ticket:hold' | 'sla:reconcile' | 'attachment:scan' | 'integration:reconcile' | 'communication:deliver' | 'intake:create' | 'audit:read' | 'dashboard:read' | 'configuration:write';
@@ -15,6 +16,8 @@ const PERMISSIONS: Record<string, Permission[]> = {
 export class PolicyService {
   has(user: UserContext, permission: Permission): boolean { return user.roles.some((role) => PERMISSIONS[role]?.includes(permission)); }
   assertPermission(user: UserContext, permission: Permission): void { if (!this.has(user, permission)) throw new ForbiddenException('Permission denied'); }
+  /** Requires a recent or strong login for sensitive actions when step-up is configured (see token-checks.ts). */
+  assertStepUp(user: UserContext, action: string): void { assertStepUp(user, action); }
   assertMakerChecker(requestedBy: string, approver: string): void { if (requestedBy === approver) throw new ForbiddenException('Maker-checker policy prohibits self-approval'); }
   assertTicketAccess(user: UserContext, ticket: TicketPolicySubject, permission: Permission): void {
     this.assertPermission(user, permission);

@@ -8,6 +8,8 @@ import type { UserContext } from '../auth/user-context.js';
 import { SlaService } from './sla.service.js';
 import { OutboxService } from '../outbox/outbox.service.js';
 import { CaseConfigurationService } from '../configuration/configuration.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
+import { COMPLAINT_OUTCOMES, PRIVACY_OUTCOMES } from '../compliance/compliance.dto.js';
 import { WorkflowDefinitionService } from '../workflow/workflow-definition.service.js';
 import { ComplianceService } from '../compliance/compliance.service.js';
 import { AssignmentService } from './assignment.service.js';
@@ -15,14 +17,14 @@ import { LiveEventsService } from '../live/live-events.service.js';
 import { AttachmentStorageService } from '../storage/attachment-storage.service.js';
 import type { AddNoteDto, ApprovalDecisionDto, ApprovalRequestDto, AssignTicketDto, AttachmentScanResultDto, CompleteAttachmentDto, CreateAttachmentDto, CreateCommunicationDto, CreateTicketDto, LinkTicketDto, SearchTicketsQuery, TransitionTicketDto, UpdateRetentionControlDto, UpdateTicketDto, TicketStatus } from './ticket.dto.js';
 
-type TicketRow = TicketPolicySubject & { id: string; category: string; priority: string; status: string; subject: string; description: string; custom_fields: Record<string, unknown>; created_at: Date; updated_at: Date; sla_policy_key: string | null; first_response_due_at: Date | null; resolution_due_at: Date | null; sla_status: string | null; first_responded_at: Date | null; resolved_at: Date | null; root_cause: string | null; is_complaint: boolean; communications_blocked: boolean; redacted_at: Date | null; };
+type TicketRow = TicketPolicySubject & { id: string; category: string; priority: string; status: string; subject: string; description: string; custom_fields: Record<string, unknown>; created_at: Date; updated_at: Date; sla_policy_key: string | null; first_response_due_at: Date | null; resolution_due_at: Date | null; sla_status: string | null; first_responded_at: Date | null; resolved_at: Date | null; root_cause: string | null; is_complaint: boolean; case_kind: string | null; regulatory_profile: string | null; communications_blocked: boolean; redacted_at: Date | null; };
 type ReferenceRow = { id: string; reference_type: string; source_system: string; opaque_reference: string; masked_value: string; classification: string; };
 type ApprovalRow = { id: string; ticket_id: string; action_type: string; requested_by: string; status: string; communication_id: string | null; };
 type AttachmentRow = { id: string; object_key: string; original_filename: string; content_type: string; size_bytes: string; classification: string; upload_status: string; malware_status: string; checksum_sha256: string | null; uploaded_by: string; created_at: Date; };
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly db: PgService, private readonly policy: PolicyService, private readonly audit: AuditService, private readonly sla: SlaService, private readonly outbox: OutboxService, private readonly configuration: CaseConfigurationService, private readonly storage: AttachmentStorageService, private readonly live: LiveEventsService, private readonly assignment: AssignmentService, private readonly compliance: ComplianceService, private readonly workflows: WorkflowDefinitionService) {}
+  constructor(private readonly db: PgService, private readonly policy: PolicyService, private readonly audit: AuditService, private readonly sla: SlaService, private readonly outbox: OutboxService, private readonly configuration: CaseConfigurationService, private readonly storage: AttachmentStorageService, private readonly live: LiveEventsService, private readonly assignment: AssignmentService, private readonly compliance: ComplianceService, private readonly workflows: WorkflowDefinitionService, private readonly notifications: NotificationsService) {}
 
   async create(user: UserContext, dto: CreateTicketDto, idempotencyKey: string, correlationId: string): Promise<unknown> {
     this.policy.assertPermission(user, 'ticket:create');
@@ -38,7 +40,7 @@ export class TicketsService {
       }
       const id = randomUUID();
       await this.configuration.assertTicketSelection(client, user, dto.category, dto.queue, dto.department);
-      const sla = await this.sla.calculate(client, dto.priority);
+      const sla = await this.sla.calculate(client, dto.priority, new Date(), dto.country);
       await client.query(`INSERT INTO tickets (id, category, priority, sensitivity, queue, branch_code, department, legal_entity, country, subject, description, custom_fields, created_by)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, [id, dto.category, dto.priority, dto.sensitivity, dto.queue, dto.branchCode, dto.department, dto.legalEntity, dto.country, dto.subject, dto.description, JSON.stringify(dto.customFields ?? {}), user.subject]);
       await client.query('UPDATE tickets SET sla_policy_key=$1, first_response_due_at=$2, resolution_due_at=$3, sla_status=$4 WHERE id=$5', [sla.policyKey, sla.firstResponseDueAt, sla.resolutionDueAt, 'running', id]);
@@ -61,12 +63,23 @@ export class TicketsService {
     await this.db.transaction((client) => this.audit.write(client, { actorId: user.subject, action, targetType: 'ticket_list', targetId: `${user.legalEntity}:${user.country}`, correlationId, outcome: 'success', metadata: { resultCount: ids.length, ticketIds: ids.slice(0, 50).join(','), ...(action === 'ticket.search_performed' ? { hadSearchTerm: hadTerm } : {}) } }));
   }
 
-  async list(user: UserContext, correlationId: string): Promise<unknown[]> {
+  /** Newest first, in pages. `cursor` is the opaque value returned as `nextCursor` by the previous page. */
+  async list(user: UserContext, correlationId: string, cursor?: string, limit = 50): Promise<{ items: unknown[]; nextCursor: string | null }> {
     this.policy.assertPermission(user, 'ticket:read');
-    const result = await this.db.query<TicketRow>(`SELECT * FROM tickets WHERE legal_entity=$1 AND country=$2 AND queue = ANY($3::text[]) ORDER BY created_at DESC LIMIT 100`, [user.legalEntity, user.country, user.queues]);
-    const visible = result.rows.filter((ticket) => this.canRead(user, ticket));
+    const pageSize = Math.min(Math.max(Math.trunc(limit) || 50, 1), 100);
+    let afterCreatedAt: string | null = null; let afterId: string | null = null;
+    if (cursor) {
+      const [createdAt, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+      if (!createdAt || !id || Number.isNaN(Date.parse(createdAt)) || !/^[0-9a-f-]{36}$/i.test(id)) throw new BadRequestException('Invalid cursor');
+      afterCreatedAt = createdAt; afterId = id;
+    }
+    const result = await this.db.query<TicketRow>(`SELECT * FROM tickets WHERE legal_entity=$1 AND country=$2 AND queue = ANY($3::text[])
+      AND ($4::timestamptz IS NULL OR (created_at, id) < ($4::timestamptz, $5::uuid)) ORDER BY created_at DESC, id DESC LIMIT $6`, [user.legalEntity, user.country, user.queues, afterCreatedAt, afterId, pageSize + 1]);
+    const page = result.rows.slice(0, pageSize); const more = result.rows.length > pageSize;
+    const visible = page.filter((ticket) => this.canRead(user, ticket));
     await this.auditListing(user, 'ticket.list_viewed', correlationId, visible.map((ticket) => ticket.id));
-    return visible.map((ticket) => this.publicTicket(ticket));
+    const last = page[page.length - 1];
+    return { items: visible.map((ticket) => this.publicTicket(ticket)), nextCursor: more && last ? Buffer.from(`${last.created_at.toISOString()}|${last.id}`).toString('base64url') : null };
   }
 
   async search(user: UserContext, query: SearchTicketsQuery, correlationId: string): Promise<unknown[]> {
@@ -87,14 +100,15 @@ export class TicketsService {
 
   async updateRetentionControl(user: UserContext, ticketId: string, dto: UpdateRetentionControlDto, correlationId: string): Promise<unknown> {
     return this.db.transaction(async (client) => {
-      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:hold');
+      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:hold'); this.policy.assertStepUp(user, 'change a legal hold or retention date');
       if (dto.legalHold && !dto.holdReason) throw new ConflictException('A legal-hold reason is required when enabling a hold');
       if (dto.retentionUntil && new Date(dto.retentionUntil).getTime() <= Date.now()) throw new ConflictException('Retention must be in the future');
+      const previousRetention = (await client.query<{ legal_hold: boolean; retention_until: Date | null }>('SELECT legal_hold,retention_until FROM ticket_retention_controls WHERE ticket_id=$1', [ticketId])).rows[0];
       const result = await client.query<{ ticket_id: string; retention_until: Date | null; legal_hold: boolean; hold_reason: string | null; updated_at: Date }>(`INSERT INTO ticket_retention_controls (ticket_id,retention_until,legal_hold,hold_reason,updated_by)
         VALUES ($1,$2,$3,$4,$5)
         ON CONFLICT (ticket_id) DO UPDATE SET retention_until=EXCLUDED.retention_until, legal_hold=EXCLUDED.legal_hold, hold_reason=EXCLUDED.hold_reason, updated_by=EXCLUDED.updated_by, updated_at=now()
         RETURNING ticket_id,retention_until,legal_hold,hold_reason,updated_at`, [ticketId, dto.retentionUntil ?? null, dto.legalHold, dto.legalHold ? dto.holdReason : null, user.subject]);
-      await this.audit.write(client, { actorId: user.subject, action: 'ticket.retention_control_updated', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { legalHold: dto.legalHold, retentionUntil: dto.retentionUntil ?? null, hasHoldReason: Boolean(dto.holdReason) } });
+      await this.audit.write(client, { actorId: user.subject, action: 'ticket.retention_control_updated', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { legalHold: dto.legalHold, retentionUntil: dto.retentionUntil ?? null, hasHoldReason: Boolean(dto.holdReason), previousLegalHold: previousRetention?.legal_hold ?? false, previousRetentionUntil: previousRetention?.retention_until?.toISOString() ?? null } });
       await this.outbox.enqueue(client, { eventType: 'ticket.retention_control_updated', aggregateType: 'ticket', aggregateId: ticketId, correlationId, payload: { ticketId, legalHold: dto.legalHold, retentionUntil: dto.retentionUntil ?? null } });
       const row = result.rows[0];
       return { ticketId: row.ticket_id, legalHold: row.legal_hold, retentionUntil: row.retention_until, updatedAt: row.updated_at };
@@ -103,9 +117,9 @@ export class TicketsService {
 
   async update(user: UserContext, ticketId: string, dto: UpdateTicketDto, correlationId: string): Promise<unknown> {
     return this.db.transaction(async (client) => {
-      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:update');
+      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:update'); this.assertFresh(ticket, dto.expectedUpdatedAt);
       const updated = await client.query<TicketRow>(`UPDATE tickets SET priority=COALESCE($1,priority), description=COALESCE($2,description), custom_fields=COALESCE($3,custom_fields), updated_at=now() WHERE id=$4 RETURNING *`, [dto.priority ?? null, dto.description ?? null, dto.customFields ? JSON.stringify(dto.customFields) : null, ticketId]);
-      await this.audit.write(client, { actorId: user.subject, action: 'ticket.updated', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success' });
+      await this.audit.write(client, { actorId: user.subject, action: 'ticket.updated', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: this.changeSummary(ticket, updated.rows[0]) });
       await this.outbox.enqueue(client, { eventType: 'ticket.updated', aggregateType: 'ticket', aggregateId: ticketId, correlationId, payload: { ticketId, priority: dto.priority ?? ticket.priority } });
       await this.live.notify(client, 'ticket.updated', updated.rows[0]);
       return this.publicTicket(updated.rows[0]);
@@ -114,19 +128,20 @@ export class TicketsService {
 
   async assign(user: UserContext, ticketId: string, dto: AssignTicketDto, correlationId: string): Promise<unknown> {
     return this.db.transaction(async (client) => {
-      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:assign');
+      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:assign'); this.assertFresh(ticket, dto.expectedUpdatedAt);
       if (!user.queues.includes(dto.queue)) throw new ForbiddenException('Target queue is outside your scope');
       const updated = await client.query<TicketRow>('UPDATE tickets SET queue=$1, assigned_to=$2, status=$3, updated_at=now() WHERE id=$4 RETURNING *', [dto.queue, dto.assigneeId ?? null, 'assigned', ticketId]);
-      await this.audit.write(client, { actorId: user.subject, action: 'ticket.assigned', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { queue: dto.queue } });
+      await this.audit.write(client, { actorId: user.subject, action: 'ticket.assigned', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { queue: dto.queue, fromQueue: ticket.queue, toQueue: dto.queue, fromAssignee: ticket.assigned_to ?? null, toAssignee: dto.assigneeId ?? null, fromStatus: ticket.status } });
       await this.outbox.enqueue(client, { eventType: 'ticket.assigned', aggregateType: 'ticket', aggregateId: ticketId, correlationId, payload: { ticketId, queue: dto.queue, assigneeId: dto.assigneeId ?? null } });
       await this.live.notify(client, 'ticket.assigned', updated.rows[0], ticket.queue);
+      if (dto.assigneeId) await this.notifications.create(client, { user: dto.assigneeId, legalEntity: ticket.legal_entity, country: ticket.country }, 'ticket_assigned', 'A ticket was assigned to you', ticketId);
       return this.publicTicket(updated.rows[0]);
     });
   }
 
   async revealReferences(user: UserContext, ticketId: string, correlationId: string): Promise<unknown> {
     return this.db.transaction(async (client) => {
-      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:reveal');
+      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:reveal'); this.policy.assertStepUp(user, 'reveal customer references');
       const references = await client.query<ReferenceRow>('SELECT * FROM ticket_references WHERE ticket_id=$1', [ticketId]);
       await this.audit.write(client, { actorId: user.subject, action: 'ticket.reference_revealed', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { count: references.rows.length } });
       await this.outbox.enqueue(client, { eventType: 'ticket.reference_revealed', aggregateType: 'ticket', aggregateId: ticketId, correlationId, payload: { ticketId, count: references.rows.length } });
@@ -152,11 +167,17 @@ export class TicketsService {
     return this.db.transaction(async (client) => {
       const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:update');
       if (ticket.redacted_at) throw new ConflictException('This ticket has been de-identified under the retention policy and can no longer be changed');
+      this.assertFresh(ticket, dto.expectedUpdatedAt);
       await this.workflows.assertTransition(client, ticket.category, ticket.status, dto.toStatus, user.roles);
       await client.query('INSERT INTO ticket_status_history (id,ticket_id,from_status,to_status,reason,changed_by) VALUES ($1,$2,$3,$4,$5,$6)', [randomUUID(), ticketId, ticket.status, dto.toStatus, dto.reason, user.subject]);
-      if (dto.toStatus === 'resolved' && ticket.is_complaint && !dto.idrOutcome) throw new BadRequestException('A complaint needs a dispute-resolution outcome to be resolved');
+      if (dto.toStatus === 'resolved' && ticket.regulatory_profile) {
+        const allowed: readonly string[] = ticket.case_kind === 'privacy_request' ? PRIVACY_OUTCOMES : COMPLAINT_OUTCOMES;
+        if (!dto.idrOutcome || !allowed.includes(dto.idrOutcome)) throw new BadRequestException(`Resolving this ${ticket.case_kind === 'privacy_request' ? 'privacy request' : 'complaint'} needs an outcome: ${allowed.join(', ')}`);
+      }
       if (dto.toStatus === 'resolved' && !dto.rootCause) throw new BadRequestException('A root cause is required to resolve a ticket');
       // Resolving or waiting on the customer counts as a response; resolved_at/root_cause are set on resolve and cleared on reopen.
+      if (ticket.status === 'pending_customer' && dto.toStatus !== 'pending_customer') await this.sla.resumeIfPaused(client, ticketId);
+      await this.sla.pauseIfConfigured(client, ticket as unknown as { id: string; sla_policy_key: string | null; priority: string; status: string }, dto.toStatus);
       const updated = await client.query<TicketRow>(`UPDATE tickets SET status=$1::text, updated_at=now(),
         first_responded_at = CASE WHEN $1::text IN ('pending_customer','resolved') THEN COALESCE(first_responded_at, now()) ELSE first_responded_at END,
         resolved_at = CASE WHEN $1::text='resolved' THEN now() WHEN $1::text='reopened' THEN NULL ELSE resolved_at END,
@@ -250,11 +271,18 @@ export class TicketsService {
       if (ticket.communications_blocked) throw new ConflictException('Customer communications are blocked on this case');
       const template = await client.query<{ template_key: string; channel: string; requires_approval: boolean }>('SELECT template_key,channel,requires_approval FROM communication_templates WHERE template_key=$1 AND channel=$2 AND active=true', [dto.templateKey, dto.channel]);
       if (!template.rows[0]) throw new ConflictException('Communication template is not active for this channel');
+      // A portal message goes to the customer who raised the request, so the recipient is taken from the ticket, never typed in.
+      let recipientReference = dto.recipientReference;
+      if (dto.channel === 'portal') {
+        const portalReference = (await client.query<{ opaque_reference: string }>("SELECT opaque_reference FROM ticket_references WHERE ticket_id=$1 AND opaque_reference LIKE 'PORTAL-%' LIMIT 1", [ticketId])).rows[0];
+        if (!portalReference) throw new ConflictException('This request was not raised through the portal, so it cannot receive portal messages');
+        recipientReference = portalReference.opaque_reference;
+      }
       const id = randomUUID();
       const status = template.rows[0].requires_approval ? 'pending_approval' : 'queued';
       const eventType = status === 'queued' ? 'customer_communication.queued' : 'customer_communication.pending_approval';
       const auditAction = status === 'queued' ? 'customer_communication.queued' : 'customer_communication.approval_requested';
-      await client.query('INSERT INTO ticket_communications (id,ticket_id,channel,template_key,recipient_reference,recipient_masked,created_by,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id, ticketId, dto.channel, dto.templateKey, dto.recipientReference, this.mask(dto.recipientReference), user.subject, status]);
+      await client.query('INSERT INTO ticket_communications (id,ticket_id,channel,template_key,recipient_reference,recipient_masked,created_by,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id, ticketId, dto.channel, dto.templateKey, recipientReference, this.mask(recipientReference), user.subject, status]);
       if (status === 'queued') await client.query('UPDATE tickets SET first_responded_at=COALESCE(first_responded_at, now()) WHERE id=$1', [ticketId]);
       await this.audit.write(client, { actorId: user.subject, action: auditAction, targetType: 'communication', targetId: id, correlationId, outcome: 'success', metadata: { ticketId, channel: dto.channel, templateKey: dto.templateKey, status } });
       let approvalId: string | undefined;
@@ -263,10 +291,11 @@ export class TicketsService {
         const actionType = `customer_communication:${dto.templateKey}`;
         await client.query('INSERT INTO approval_requests (id,ticket_id,communication_id,action_type,requested_by) VALUES ($1,$2,$3,$4,$5)', [approvalId, ticketId, id, actionType, user.subject]);
         await this.audit.write(client, { actorId: user.subject, action: 'approval.requested', targetType: 'approval', targetId: approvalId, correlationId, outcome: 'success', metadata: { ticketId, communicationId: id, actionType } });
+        await this.notifications.ticketAttention(client, ticket, 'approval_needed', 'An approval is waiting for a decision', { assignee: false, supervisors: true });
         await this.outbox.enqueue(client, { eventType: 'approval.requested', aggregateType: 'approval', aggregateId: approvalId, correlationId, payload: { approvalId, ticketId, communicationId: id, actionType } });
       }
       await this.outbox.enqueue(client, { eventType, aggregateType: 'communication', aggregateId: id, correlationId, payload: { communicationId: id, ticketId, channel: dto.channel, templateKey: dto.templateKey, status } });
-      return { id, channel: dto.channel, templateKey: dto.templateKey, recipientMasked: this.mask(dto.recipientReference), status, ...(approvalId ? { approvalId } : {}) };
+      return { id, channel: dto.channel, templateKey: dto.templateKey, recipientMasked: this.mask(recipientReference), status, ...(approvalId ? { approvalId } : {}) };
     });
   }
 
@@ -275,6 +304,7 @@ export class TicketsService {
       const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:update');
       const id = randomUUID(); await client.query('INSERT INTO approval_requests (id,ticket_id,action_type,requested_by) VALUES ($1,$2,$3,$4)', [id, ticketId, dto.actionType, user.subject]);
       await this.audit.write(client, { actorId: user.subject, action: 'approval.requested', targetType: 'approval', targetId: id, correlationId, outcome: 'success', metadata: { ticketId, actionType: dto.actionType } });
+      await this.notifications.ticketAttention(client, ticket, 'approval_needed', 'An approval is waiting for a decision', { assignee: false, supervisors: true });
       await this.outbox.enqueue(client, { eventType: 'approval.requested', aggregateType: 'approval', aggregateId: id, correlationId, payload: { approvalId: id, ticketId, actionType: dto.actionType } });
       return { id, status: 'pending' };
     });
@@ -284,7 +314,7 @@ export class TicketsService {
     return this.db.transaction(async (client) => {
       const approval = await client.query<ApprovalRow>('SELECT * FROM approval_requests WHERE id=$1 AND ticket_id=$2 FOR UPDATE', [approvalId, ticketId]);
       if (!approval.rows[0]) throw new NotFoundException('Approval request not found');
-      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:approve');
+      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:approve'); this.policy.assertStepUp(user, 'approve or reject this action');
       this.policy.assertMakerChecker(approval.rows[0].requested_by, user.subject);
       if (approval.rows[0].status !== 'pending') throw new ConflictException('Approval has already been decided');
       await client.query('UPDATE approval_requests SET status=$1 WHERE id=$2', [dto.decision, approvalId]);
@@ -313,8 +343,24 @@ export class TicketsService {
     const history = await client.query<{ from_status: string | null; to_status: string; reason: string; changed_by: string; changed_at: Date }>('SELECT from_status,to_status,reason,changed_by,changed_at FROM ticket_status_history WHERE ticket_id=$1 ORDER BY changed_at ASC', [ticketId]);
     const retention = await client.query<{ retention_until: Date | null; legal_hold: boolean; updated_at: Date }>('SELECT retention_until,legal_hold,updated_at FROM ticket_retention_controls WHERE ticket_id=$1', [ticketId]);
     if (auditView) await this.audit.write(client, { actorId: user.subject, action: 'ticket.viewed', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success' });
-    const allowedNextStatuses = await this.workflows.nextStatuses(ticket.category, ticket.status, user.roles);
+    const allowedNextStatuses = await this.workflows.nextStatuses(ticket.category, ticket.status, user.roles, client);
     return { ...this.publicTicket(ticket), allowedNextStatuses, references: references.rows.map(({ reference_type, source_system, masked_value, classification }) => ({ referenceType: reference_type, sourceSystem: source_system, maskedValue: masked_value, classification })), notes: notes.rows.map(({ id, visibility, body, author_id, created_at }) => ({ id, visibility, body, authorId: author_id, createdAt: created_at })), attachments: attachments.rows.map(({ id, original_filename, content_type, size_bytes, classification, upload_status, malware_status, checksum_sha256, uploaded_by, created_at }) => ({ id, filename: original_filename, contentType: content_type, sizeBytes: Number(size_bytes), classification, uploadStatus: upload_status, malwareStatus: malware_status, checksumSha256: checksum_sha256, uploadedBy: uploaded_by, createdAt: created_at })), relatedTickets: relationships.rows.map(({ source_ticket_id, target_ticket_id, relationship_type }) => ({ ticketId: source_ticket_id === ticketId ? target_ticket_id : source_ticket_id, relationshipType: relationship_type, direction: source_ticket_id === ticketId ? 'outgoing' : 'incoming' })), communications: communications.rows.map(({ id, channel, template_key, recipient_masked, status, created_at, approval_id }) => ({ id, channel, templateKey: template_key, recipientMasked: recipient_masked, status, ...(approval_id ? { approvalId: approval_id } : {}), createdAt: created_at })), history: history.rows.map(({ from_status, to_status, reason, changed_by, changed_at }) => ({ fromStatus: from_status, toStatus: to_status, reason, changedBy: changed_by, changedAt: changed_at })), retention: retention.rows[0] ? { legalHold: retention.rows[0].legal_hold, retentionUntil: retention.rows[0].retention_until, updatedAt: retention.rows[0].updated_at } : null };
+  }
+  /**
+   * What an edit changed, for the audit trail: old and new values for short controlled fields, and for free text only
+   * that it changed with a length and fingerprint, so the immutable trail proves the change without holding content.
+   */
+  /** Rejects an edit made on top of a stale view of the ticket (someone else changed it since the caller loaded it). */
+  private assertFresh(ticket: TicketRow, expectedUpdatedAt: string | undefined): void {
+    if (expectedUpdatedAt && new Date(expectedUpdatedAt).getTime() !== ticket.updated_at.getTime()) throw new ConflictException({ statusCode: 409, error: 'Conflict', code: 'stale_ticket', message: 'This ticket was changed by someone else after you opened it. Refresh and try again.' });
+  }
+  private changeSummary(before: TicketRow, after: TicketRow): Record<string, string | number | boolean | null> {
+    const summary: Record<string, string | number | boolean | null> = { previousPriority: before.priority, newPriority: after.priority };
+    if (before.description !== after.description) Object.assign(summary, { descriptionChanged: true, descriptionOldLength: before.description.length, descriptionNewLength: after.description.length, descriptionOldSha256: this.hash(before.description), descriptionNewSha256: this.hash(after.description) });
+    const keys = new Set([...Object.keys(before.custom_fields ?? {}), ...Object.keys(after.custom_fields ?? {})]);
+    const changed = [...keys].filter((key) => JSON.stringify(before.custom_fields?.[key]) !== JSON.stringify(after.custom_fields?.[key]));
+    if (changed.length) Object.assign(summary, { customFieldsChanged: changed.join(',').slice(0, 300) });
+    return summary;
   }
   private async ticket(client: PoolClient, ticketId: string): Promise<TicketRow> { const result = await client.query<TicketRow>('SELECT * FROM tickets WHERE id=$1', [ticketId]); if (!result.rows[0]) throw new NotFoundException('Ticket not found'); return result.rows[0]; }
   private publicTicket(ticket: TicketRow): Record<string, unknown> { const { branch_code, legal_entity, custom_fields, created_at, updated_at, sla_policy_key, first_response_due_at, resolution_due_at, sla_status, ...rest } = ticket; return { ...rest, branchCode: branch_code, legalEntity: legal_entity, customFields: custom_fields, createdAt: created_at, updatedAt: updated_at, slaPolicyKey: sla_policy_key, firstResponseDueAt: first_response_due_at, resolutionDueAt: resolution_due_at, slaStatus: sla_status }; }

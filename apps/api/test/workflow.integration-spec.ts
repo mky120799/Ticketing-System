@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module.js';
 import { OutboxService } from '../src/outbox/outbox.service.js';
 import { LiveEventsService, type LiveFrame } from '../src/live/live-events.service.js';
 import { AuditIntegrityService } from '../src/audit/audit-integrity.service.js';
+import { archiveAuditEvents } from '../src/audit/audit-archive.js';
 import { RetentionService } from '../src/retention/retention.service.js';
 import { WorkflowScheduler } from '../src/workflow/workflow-scheduler.js';
 
@@ -230,5 +231,136 @@ describe('routing, escalation, intake and live events', () => {
     const listViews = await app.inject({ method: 'GET', url: '/v1/audit/events?action=ticket.list_viewed&actor=smoke-sup7', headers: h(auditor) }); expect(listViews.json().events.length).toBe(1);
     expect((await app.inject({ method: 'GET', url: '/v1/audit/events', headers: h(sup) })).statusCode).toBe(403);
     expect((await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE action='audit.searched'")).rows[0].n).toBeGreaterThan(0);
+  });
+
+  it('delivers staff notifications to the right people and tracks read state per person', async () => {
+    const agent = await tok(['case-agent'], 'smoke-agent-1'); const sup = await tok(['supervisor'], 'smoke-sup8'); const other = await tok(['case-agent'], 'smoke-agent-other');
+    const inbox = async (t: string) => (await app.inject({ method: 'GET', url: '/v1/notifications', headers: h(t) })).json();
+    const mine = await inbox(agent); expect(mine.notifications.some((n: { type: string }) => n.type === 'ticket_assigned')).toBe(true); expect(mine.unread).toBeGreaterThan(0);
+    expect((await inbox(other)).unread).toBe(0); // someone else's assignment is not theirs
+    const supervisors = await inbox(sup); expect(supervisors.notifications.some((n: { type: string }) => n.type === 'sla_at_risk' || n.type === 'ticket_escalated')).toBe(true); // queue supervisors hear about deadlines and escalations
+    expect((await app.inject({ method: 'POST', url: '/v1/notifications/read', headers: h(agent), payload: {} })).statusCode).toBe(201);
+    expect((await inbox(agent)).unread).toBe(0);
+    expect((await inbox(sup)).unread).toBeGreaterThan(0); // reading one person's copy does not mark it read for others
+  });
+
+  it('records actor context and before/after values, signs anchors, and archives old events without breaking verification', async () => {
+    const { generateKeyPairSync } = await import('node:crypto');
+    const keys = generateKeyPairSync('ed25519'); process.env.AUDIT_ANCHOR_SIGNING_PRIVATE_KEY = keys.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(); process.env.AUDIT_ANCHOR_PUBLIC_KEY = keys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const integrity = app.get(AuditIntegrityService); const sup = await tok(['supervisor'], 'smoke-sup9'); const admin = await tok(['administrator'], 'smoke-admin');
+    const gw = await tok(['intake-gateway'], 'smoke-gw9', false);
+    const id = (await app.inject({ method: 'POST', url: '/v1/intake/email', headers: h(gw), payload: { messageId: `<ba-${Date.now()}@x>`, senderReference: 'CUST-REF-BA0001', subject: 'Before and after', body: 'original text' } })).json().ticketId as string;
+
+    // before/after values: priority old and new, free text proven by fingerprint only
+    await app.inject({ method: 'PATCH', url: `/v1/tickets/${id}`, headers: h(sup), payload: { priority: 'critical', description: 'rewritten text' } });
+    const edit = (await pool.query("SELECT metadata FROM audit_events WHERE action='ticket.updated' AND target_id=$1", [id])).rows[0].metadata;
+    expect(edit).toMatchObject({ previousPriority: 'normal', newPriority: 'critical', descriptionChanged: true, descriptionOldLength: 13, descriptionNewLength: 14 }); expect(JSON.stringify(edit)).not.toContain('rewritten'); expect(JSON.stringify(edit)).not.toContain('original');
+    // configuration changes carry the previous row
+    await app.inject({ method: 'PUT', url: '/v1/configuration/sla/default/normal', headers: h(admin), payload: { firstResponseMinutes: 400, resolutionMinutes: 2000, active: true } });
+    await app.inject({ method: 'PUT', url: '/v1/configuration/sla/default/normal', headers: h(admin), payload: { firstResponseMinutes: 480, resolutionMinutes: 2880, active: true } });
+    const config = (await pool.query("SELECT metadata FROM audit_events WHERE action='configuration.sla_policy_updated' ORDER BY sequence DESC LIMIT 1")).rows[0].metadata;
+    expect(JSON.parse(config.previous)).toMatchObject({ first_response_minutes: 400, resolution_minutes: 2000 });
+
+    // signed anchors verify; a forged signature is caught
+    const pre = await integrity.verify(true); expect(pre).toMatchObject({ status: 'valid' });
+    expect((await integrity.anchor('sign-test')).anchored).toBe(true);
+    const anchor = (await pool.query('SELECT sequence,signature FROM audit_anchors ORDER BY sequence DESC LIMIT 1')).rows[0]; expect(anchor.signature).toBeTruthy();
+    expect((await integrity.verify(true)).status).toBe('valid');
+    await pool.query("UPDATE audit_anchors SET signature='AAAA' WHERE sequence=$1", [anchor.sequence]);
+    const forged = await integrity.verify(true); expect(forged).toMatchObject({ status: 'invalid' }); expect(forged.failureReason).toContain('signature');
+    await pool.query('UPDATE audit_anchors SET signature=$1 WHERE sequence=$2', [anchor.signature, anchor.sequence]);
+    expect((await integrity.verify(true)).status).toBe('valid');
+
+    // archive the oldest events: refuses a damaged range, keeps the live trail verifiable, writes a manifest with a checksum
+    const { mkdtempSync, readFileSync } = await import('node:fs'); const { tmpdir } = await import('node:os'); const { join } = await import('node:path'); const { createHash } = await import('node:crypto');
+    const through = Number((await pool.query('SELECT sequence FROM audit_events ORDER BY sequence OFFSET 20 LIMIT 1')).rows[0].sequence);
+    const out = mkdtempSync(join(tmpdir(), 'audit-archive-'));
+    const result = await archiveAuditEvents({ connectionString: process.env.DATABASE_URL!, throughSequence: through, outDir: out, archivedBy: 'integration-test', note: 'test' });
+    expect(result.count).toBeGreaterThan(10); expect(createHash('sha256').update(readFileSync(result.file)).digest('hex')).toBe(result.sha256);
+    expect((await pool.query('SELECT count(*)::int AS n FROM audit_events WHERE sequence <= $1', [through])).rows[0].n).toBe(0);
+    expect((await pool.query("SELECT count(*)::int AS n FROM pg_trigger WHERE tgrelid='audit_events'::regclass AND tgenabled <> 'O' AND NOT tgisinternal")).rows[0].n).toBe(0); // protections are back on
+    expect(await integrity.verify(true)).toMatchObject({ status: 'valid' });
+    await expect(archiveAuditEvents({ connectionString: process.env.DATABASE_URL!, throughSequence: 1_000_000_000, outDir: out, archivedBy: 'x' })).rejects.toThrow(/newest audit event must remain/);
+    // tampering after an archive is still caught
+    await pool.query('ALTER TABLE audit_events DISABLE TRIGGER USER'); const victimRow = (await pool.query('SELECT sequence,actor_id FROM audit_events ORDER BY sequence DESC OFFSET 2 LIMIT 1')).rows[0]; const victim = victimRow.sequence;
+    await pool.query("UPDATE audit_events SET actor_id='someone-else' WHERE sequence=$1", [victim]); await pool.query('ALTER TABLE audit_events ENABLE TRIGGER USER');
+    expect((await integrity.verify(true)).status).toBe('invalid');
+    await pool.query('ALTER TABLE audit_events DISABLE TRIGGER USER'); await pool.query('UPDATE audit_events SET actor_id=$2 WHERE sequence=$1', [victim, victimRow.actor_id]); await pool.query('ALTER TABLE audit_events ENABLE TRIGGER USER');
+    delete process.env.AUDIT_ANCHOR_SIGNING_PRIVATE_KEY; delete process.env.AUDIT_ANCHOR_PUBLIC_KEY;
+  }, 60_000);
+
+  it('lets operators replay dead letters, rejects stale edits, pages lists, and offers trends and reporting views', async () => {
+    const admin = await tok(['administrator'], 'ops-admin'); const sup = await tok(['supervisor'], 'ops-sup'); const gw = await tok(['intake-gateway'], 'ops-gw', false);
+    // dead-letter tooling
+    await pool.query("INSERT INTO integration_outbox (id,event_type,aggregate_type,aggregate_id,correlation_id,payload,status,attempts,last_error) VALUES (gen_random_uuid(),'ticket.created','ticket','dl-1','c','{}','dead_letter',5,'publisher_failure')");
+    expect((await app.inject({ method: 'GET', url: '/v1/operations/outbox/summary', headers: h(sup) })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/v1/operations/outbox/summary', headers: h(admin) })).json().dead_letter).toBeGreaterThanOrEqual(1);
+    const dead = (await app.inject({ method: 'GET', url: '/v1/operations/outbox/events?status=dead_letter', headers: h(admin) })).json(); expect(dead[0]).toMatchObject({ aggregateId: 'dl-1', attempts: 5 }); expect(dead[0].payload).toBeUndefined();
+    expect((await app.inject({ method: 'POST', url: `/v1/operations/outbox/events/${dead[0].id}/replay`, headers: h(admin), payload: {} })).json()).toEqual({ replayed: 1 });
+    expect((await pool.query('SELECT status,attempts FROM integration_outbox WHERE id=$1', [dead[0].id])).rows[0]).toEqual({ status: 'retry', attempts: 0 });
+    expect((await app.inject({ method: 'POST', url: `/v1/operations/outbox/events/${dead[0].id}/replay`, headers: h(admin), payload: {} })).statusCode).toBe(404); // no longer dead-lettered
+    expect((await pool.query("SELECT count(*)::int AS n FROM audit_events WHERE action='outbox.replayed'")).rows[0].n).toBeGreaterThan(0);
+
+    // optimistic concurrency
+    const create = async (n: number) => (await app.inject({ method: 'POST', url: '/v1/intake/email', headers: h(gw), payload: { messageId: `<pg-${n}-${Date.now()}@x>`, senderReference: `CUST-REF-PG${n}00`, subject: `Paging ${n}`, body: 'b' } })).json().ticketId as string;
+    const first = await create(1); for (let n = 2; n <= 5; n++) await create(n);
+    const seen = (await app.inject({ method: 'GET', url: `/v1/tickets/${first}`, headers: h(sup) })).json().updatedAt as string;
+    expect((await app.inject({ method: 'PATCH', url: `/v1/tickets/${first}`, headers: h(sup), payload: { priority: 'high', expectedUpdatedAt: seen } })).statusCode).toBe(200);
+    const stale = await app.inject({ method: 'PATCH', url: `/v1/tickets/${first}`, headers: h(sup), payload: { priority: 'low', expectedUpdatedAt: seen } });
+    expect(stale.statusCode).toBe(409); expect(stale.json()).toMatchObject({ code: 'stale_ticket' });
+
+    // paging: pages do not overlap, the last page has no cursor, a bad cursor is rejected
+    const page1 = await app.inject({ method: 'GET', url: '/v1/tickets?limit=2', headers: h(sup) }); const cursor = page1.headers['x-next-cursor'] as string; expect(page1.json()).toHaveLength(2); expect(cursor).toBeTruthy();
+    const page2 = await app.inject({ method: 'GET', url: `/v1/tickets?limit=2&cursor=${cursor}`, headers: h(sup) }); const ids1 = page1.json().map((t: { id: string }) => t.id);
+    expect(page2.json().some((t: { id: string }) => ids1.includes(t.id))).toBe(false);
+    expect((await app.inject({ method: 'GET', url: '/v1/tickets?cursor=not-a-cursor', headers: h(sup) })).statusCode).toBe(400);
+    const everything = new Set<string>(); let next: string | undefined; do { const r = await app.inject({ method: 'GET', url: `/v1/tickets?limit=3${next ? `&cursor=${next}` : ''}`, headers: h(sup) }); r.json().forEach((t: { id: string }) => everything.add(t.id)); next = r.headers['x-next-cursor'] as string | undefined; } while (next);
+    expect(everything.size).toBeGreaterThanOrEqual(5);
+
+    // trends
+    const trends = (await app.inject({ method: 'GET', url: '/v1/dashboard/trends?weeks=4', headers: h(sup) })).json(); expect(trends.series).toHaveLength(4); expect(trends.series[3].created).toBeGreaterThanOrEqual(5); expect(trends.byCategory.length).toBeGreaterThan(0);
+
+    // reporting views exclude free text
+    const columns = (await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='reporting' AND table_name='tickets'")).rows.map((r) => r.column_name);
+    expect(columns).toEqual(expect.arrayContaining(['status', 'resolved_at', 'regulatory_status'])); expect(columns).not.toContain('subject'); expect(columns).not.toContain('description'); expect(columns).not.toContain('custom_fields');
+    expect((await pool.query('SELECT count(*)::int AS n FROM reporting.tickets')).rows[0].n).toBeGreaterThan(0);
+  });
+
+  it('keeps the audit chain valid under many concurrent writers', async () => {
+    const sup = await tok(['supervisor'], 'stress-sup'); const gw = await tok(['intake-gateway'], 'stress-gw', false);
+    const ids = await Promise.all(Array.from({ length: 12 }, (_, n) => app.inject({ method: 'POST', url: '/v1/intake/email', headers: h(gw), payload: { messageId: `<stress-${n}-${Date.now()}@x>`, senderReference: `CUST-REF-ST${String(n).padStart(4, '0')}`, subject: `Stress ${n}`, body: 'b' } }).then((r) => r.json().ticketId as string)));
+    await Promise.all(ids.flatMap((id) => [
+      app.inject({ method: 'POST', url: `/v1/tickets/${id}/notes`, headers: h(sup), payload: { visibility: 'internal', body: 'concurrent note' } }),
+      app.inject({ method: 'GET', url: `/v1/tickets/${id}`, headers: h(sup) }),
+      app.inject({ method: 'GET', url: '/v1/tickets', headers: h(sup) }),
+      app.inject({ method: 'PATCH', url: `/v1/tickets/${id}`, headers: h(sup), payload: { priority: 'high' } })
+    ]));
+    const result = await app.get(AuditIntegrityService).verify(true);
+    expect(result).toMatchObject({ status: 'valid' }); expect(result.eventsChecked).toBeGreaterThan(100);
+  }, 60_000);
+
+  it('counts SLA time in business hours and stops the clock while waiting for the customer', async () => {
+    const admin = await tok(['administrator'], 'cal-admin'); const sup = await tok(['supervisor'], 'cal-sup'); const gw = await tok(['intake-gateway'], 'cal-gw', false);
+    const policy = (payload: object) => app.inject({ method: 'PUT', url: '/v1/configuration/sla/default/normal', headers: h(admin), payload: payload as object });
+    try {
+      expect((await policy({ firstResponseMinutes: 120, resolutionMinutes: 960, active: true, calendar: 'business', pauseWhilePendingCustomer: true })).statusCode).toBe(200);
+      const id = (await app.inject({ method: 'POST', url: '/v1/intake/email', headers: h(gw), payload: { messageId: `<cal-${Date.now()}@x>`, senderReference: 'CUST-REF-CAL001', subject: 'Calendar', body: 'b' } })).json().ticketId as string;
+      const due = (await pool.query('SELECT created_at,resolution_due_at FROM tickets WHERE id=$1', [id])).rows[0];
+      const local = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(due.resolution_due_at); const part = (t: string) => local.find((p) => p.type === t)!.value;
+      expect(['Mon', 'Tue', 'Wed', 'Thu', 'Fri']).toContain(part('weekday')); const minute = Number(part('hour')) * 60 + Number(part('minute')); expect(minute).toBeGreaterThanOrEqual(570); expect(minute).toBeLessThanOrEqual(1050); // inside 09:30-17:30 India time
+      expect(due.resolution_due_at.getTime() - due.created_at.getTime()).toBeGreaterThanOrEqual(960 * 60_000); // working time is never shorter than wall time
+
+      const move = (toStatus: string) => app.inject({ method: 'POST', url: `/v1/tickets/${id}/status`, headers: h(sup), payload: { toStatus, reason: 'calendar test' } });
+      expect((await move('in_progress')).statusCode).toBe(201); expect((await move('pending_customer')).statusCode).toBe(201);
+      expect((await pool.query('SELECT sla_paused_at FROM tickets WHERE id=$1', [id])).rows[0].sla_paused_at).not.toBeNull();
+      await app.get(WorkflowScheduler).tick(); expect((await pool.query('SELECT sla_status FROM tickets WHERE id=$1', [id])).rows[0].sla_status).toBe('paused');
+
+      await pool.query("UPDATE tickets SET sla_paused_at = now() - interval '2 hours' WHERE id=$1", [id]);
+      const before = (await pool.query('SELECT resolution_due_at FROM tickets WHERE id=$1', [id])).rows[0].resolution_due_at as Date;
+      expect((await move('in_progress')).statusCode).toBe(201);
+      const after = (await pool.query('SELECT resolution_due_at,sla_paused_at FROM tickets WHERE id=$1', [id])).rows[0];
+      expect(after.sla_paused_at).toBeNull(); expect(Math.round((after.resolution_due_at.getTime() - before.getTime()) / 60_000)).toBeGreaterThanOrEqual(119); // moved out by the two hours spent waiting
+    } finally { await policy({ firstResponseMinutes: 480, resolutionMinutes: 2880, active: true }); }
+    const bh = await app.inject({ method: 'GET', url: '/v1/configuration/business-hours', headers: h(admin) }); expect(bh.json()).toMatchObject({ country: 'IN', startMinute: 570 });
   });
 });

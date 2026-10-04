@@ -5,9 +5,11 @@ import { PolicyService, type TicketPolicySubject } from '../auth/policy.service.
 import type { UserContext } from '../auth/user-context.js';
 import { PgService } from '../database/pg.service.js';
 import { LiveEventsService, type LiveTicket } from '../live/live-events.service.js';
+import { NotificationsService } from '../notifications/notifications.service.js';
 import { OutboxService } from '../outbox/outbox.service.js';
+import { toCsv } from './csv.js';
 import { addBusinessDays } from './business-calendar.js';
-import type { AfcaDto, ClassifyComplaintDto, CommunicationBlockDto, UpsertRegulatoryProfileDto } from './compliance.dto.js';
+import type { UpsertBusinessHoursDto, AfcaDto, ClassifyComplaintDto, CommunicationBlockDto, UpsertRegulatoryProfileDto } from './compliance.dto.js';
 
 export const COMPLIANCE_ACTOR = 'system:regulatory-clock';
 const timeZone = () => process.env.BUSINESS_TIMEZONE ?? 'Australia/Sydney';
@@ -21,7 +23,7 @@ const statusSql = (t: string, p: string) => `CASE
   ELSE 'on_track' END`;
 
 type TicketScope = TicketPolicySubject & { id: string; status: string; is_complaint: boolean; created_at: Date };
-interface ProfileRow { profile_key: string; acknowledge_business_days: number; final_response_calendar_days: number; active: boolean; }
+interface ProfileRow { profile_key: string; acknowledge_business_days: number; final_response_calendar_days: number; active: boolean; case_kind: string; }
 
 /**
  * Regulatory clocks and case controls that differ by jurisdiction but not by code path: complaint classification,
@@ -30,7 +32,7 @@ interface ProfileRow { profile_key: string; acknowledge_business_days: number; f
  */
 @Injectable()
 export class ComplianceService {
-  constructor(private readonly db: PgService, private readonly policy: PolicyService, private readonly audit: AuditService, private readonly outbox: OutboxService, private readonly live: LiveEventsService) {}
+  constructor(private readonly db: PgService, private readonly policy: PolicyService, private readonly audit: AuditService, private readonly outbox: OutboxService, private readonly live: LiveEventsService, private readonly notifications: NotificationsService) {}
 
   /** At ticket creation: apply the category's regulatory profile and communication-block default. */
   async applyAtCreation(client: PoolClient, ticket: { id: string; category: string; country: string; createdAt: Date }, correlationId: string, actorId: string): Promise<void> {
@@ -93,13 +95,14 @@ export class ComplianceService {
         FROM regulatory_profiles p
         WHERE p.profile_key=t.regulatory_profile AND t.id IN (
           SELECT t2.id FROM tickets t2 JOIN regulatory_profiles p2 ON p2.profile_key=t2.regulatory_profile
-          WHERE t2.is_complaint=true AND t2.status NOT IN ('closed','cancelled') AND t2.regulatory_status IS DISTINCT FROM ${statusSql('t2', 'p2')}
+          WHERE t2.regulatory_profile IS NOT NULL AND t2.status NOT IN ('closed','cancelled') AND t2.regulatory_status IS DISTINCT FROM ${statusSql('t2', 'p2')}
           ORDER BY t2.updated_at LIMIT $1 FOR UPDATE OF t2 SKIP LOCKED)
         RETURNING t.*`, [batchSize]);
       for (const row of result.rows) {
         await this.audit.write(client, { actorId: COMPLIANCE_ACTOR, action: `ticket.regulatory_${row.regulatory_status}`, targetType: 'ticket', targetId: row.id, correlationId, outcome: 'success', metadata: { regulatoryStatus: row.regulatory_status } });
         await this.outbox.enqueue(client, { eventType: 'ticket.regulatory_status_changed', aggregateType: 'ticket', aggregateId: row.id, correlationId, payload: { ticketId: row.id, regulatoryStatus: row.regulatory_status } });
         await this.live.notify(client, 'ticket.sla_changed', row);
+        if (['ack_overdue', 'at_risk', 'final_response_overdue'].includes(row.regulatory_status)) await this.notifications.ticketAttention(client, row, 'regulatory_at_risk', row.regulatory_status === 'at_risk' ? 'A complaint is approaching its final-response deadline' : row.regulatory_status === 'ack_overdue' ? 'A complaint has not been acknowledged in time' : 'A complaint has passed its final-response deadline');
       }
       return { updated: result.rows.length };
     });
@@ -112,7 +115,7 @@ export class ComplianceService {
    * either needs a human decision under the Act's exceptions.
    */
   async subjectAccess(user: UserContext, reference: string, correlationId: string): Promise<unknown> {
-    this.policy.assertPermission(user, 'ticket:reveal');
+    this.policy.assertPermission(user, 'ticket:reveal'); this.policy.assertStepUp(user, 'export a customer\'s data');
     return this.db.transaction(async (client) => {
       const tickets = (await client.query<Record<string, unknown>>(`SELECT t.id,t.category,t.subject,t.description,t.status,t.source_channel,t.created_at,t.resolved_at,t.idr_outcome,t.is_complaint,t.communications_blocked,t.redacted_at
         FROM tickets t WHERE t.legal_entity=$1 AND t.country=$2 AND t.queue = ANY($3::text[]) AND EXISTS (SELECT 1 FROM ticket_references r WHERE r.ticket_id=t.id AND r.opaque_reference=$4) ORDER BY t.created_at`, [user.legalEntity, user.country, user.queues, reference])).rows;
@@ -130,7 +133,7 @@ export class ComplianceService {
 
   /** Complaints register for a period. Classifications, dates and outcomes only: no free text or customer data. */
   async register(user: UserContext, from: string, to: string, format: 'json' | 'csv', correlationId: string): Promise<unknown> {
-    this.policy.assertPermission(user, 'dashboard:read');
+    this.policy.assertPermission(user, 'dashboard:read'); if (format === 'csv') this.policy.assertStepUp(user, 'export the complaints register');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) throw new BadRequestException('from and to must be YYYY-MM-DD dates');
     const rows = await this.db.transaction(async (client) => {
       const result = await client.query<Record<string, unknown>>(`SELECT id,category,source_channel,priority,status,regulatory_profile,regulatory_status,created_at AS received_at,acknowledge_due_at,first_responded_at AS acknowledged_at,final_response_due_at,resolved_at AS final_response_at,
@@ -140,7 +143,7 @@ export class ComplianceService {
       return result.rows;
     });
     if (format === 'json') return { from, to, count: rows.length, complaints: rows };
-    return this.toCsv(rows);
+    return toCsv(rows);
   }
 
   async listProfiles(user: UserContext): Promise<unknown[]> {
@@ -154,15 +157,35 @@ export class ComplianceService {
     if (!/^[a-z0-9][a-z0-9-]{1,59}$/.test(profileKey)) throw new ConflictException('Profile key is invalid');
     if (dto.jurisdiction !== user.country) throw new ForbiddenException('Profile jurisdiction must match your country');
     return this.db.transaction(async (client) => {
+      const previous = await this.audit.previous(client, 'regulatory_profiles', 'profile_key=$1', [profileKey]);
       const existing = (await client.query<{ jurisdiction: string }>('SELECT jurisdiction FROM regulatory_profiles WHERE profile_key=$1', [profileKey])).rows[0];
       if (existing && existing.jurisdiction !== user.country) throw new ForbiddenException('Profile belongs to another jurisdiction');
       await client.query(`INSERT INTO regulatory_profiles (profile_key,label,jurisdiction,acknowledge_business_days,final_response_calendar_days,at_risk_days,active,updated_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
         ON CONFLICT (profile_key) DO UPDATE SET label=EXCLUDED.label, acknowledge_business_days=EXCLUDED.acknowledge_business_days, final_response_calendar_days=EXCLUDED.final_response_calendar_days, at_risk_days=EXCLUDED.at_risk_days, active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()`,
       [profileKey, dto.label, dto.jurisdiction, dto.acknowledgeBusinessDays, dto.finalResponseCalendarDays, dto.atRiskDays, dto.active, user.subject]);
       const data = { profileKey, jurisdiction: dto.jurisdiction, acknowledgeBusinessDays: dto.acknowledgeBusinessDays, finalResponseCalendarDays: dto.finalResponseCalendarDays, atRiskDays: dto.atRiskDays, active: dto.active };
-      await this.audit.write(client, { actorId: user.subject, action: 'configuration.regulatory_profile_updated', targetType: 'regulatory_profile', targetId: profileKey, correlationId, outcome: 'success', metadata: data });
+      await this.audit.write(client, { actorId: user.subject, action: 'configuration.regulatory_profile_updated', targetType: 'regulatory_profile', targetId: profileKey, correlationId, outcome: 'success', metadata: { ...data, previous } });
       await this.outbox.enqueue(client, { eventType: 'configuration.regulatory_profile_changed', aggregateType: 'regulatory_profile', aggregateId: profileKey, correlationId, payload: data });
       return { ...data, label: dto.label };
+    });
+  }
+
+  async getBusinessHours(user: UserContext): Promise<unknown> {
+    this.policy.assertPermission(user, 'configuration:write');
+    const row = (await this.db.query<{ timezone: string; start_minute: number; end_minute: number; working_days: number[] }>('SELECT timezone,start_minute,end_minute,working_days FROM business_hours WHERE country=$1', [user.country])).rows[0];
+    return row ? { country: user.country, timezone: row.timezone, startMinute: row.start_minute, endMinute: row.end_minute, workingDays: row.working_days } : null;
+  }
+
+  async upsertBusinessHours(user: UserContext, dto: UpsertBusinessHoursDto, correlationId: string): Promise<unknown> {
+    this.policy.assertPermission(user, 'configuration:write');
+    if (dto.startMinute >= dto.endMinute) throw new BadRequestException('Opening time must be before closing time');
+    try { new Intl.DateTimeFormat('en-CA', { timeZone: dto.timezone }); } catch { throw new BadRequestException('Unknown time zone'); }
+    return this.db.transaction(async (client) => {
+      const previous = await this.audit.previous(client, 'business_hours', 'country=$1', [user.country]);
+      await client.query(`INSERT INTO business_hours (country,timezone,start_minute,end_minute,working_days,updated_by) VALUES ($1,$2,$3,$4,$5,$6)
+        ON CONFLICT (country) DO UPDATE SET timezone=EXCLUDED.timezone, start_minute=EXCLUDED.start_minute, end_minute=EXCLUDED.end_minute, working_days=EXCLUDED.working_days, updated_by=EXCLUDED.updated_by, updated_at=now()`, [user.country, dto.timezone, dto.startMinute, dto.endMinute, [...new Set(dto.workingDays)].sort(), user.subject]);
+      await this.audit.write(client, { actorId: user.subject, action: 'configuration.business_hours_updated', targetType: 'business_hours', targetId: user.country, correlationId, outcome: 'success', metadata: { previous, timezone: dto.timezone, startMinute: dto.startMinute, endMinute: dto.endMinute, workingDays: dto.workingDays.join(',') } });
+      return { country: user.country, ...dto };
     });
   }
 
@@ -176,19 +199,20 @@ export class ComplianceService {
     this.policy.assertPermission(user, 'configuration:write');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new BadRequestException('Date must be YYYY-MM-DD');
     return this.db.transaction(async (client) => {
+      const previous = await this.audit.previous(client, 'business_holidays', 'country=$1 AND holiday_date=$2', [user.country, date]);
       await client.query(`INSERT INTO business_holidays (country,holiday_date,name,updated_by) VALUES ($1,$2,$3,$4) ON CONFLICT (country,holiday_date) DO UPDATE SET name=EXCLUDED.name, updated_by=EXCLUDED.updated_by, updated_at=now()`, [user.country, date, name, user.subject]);
-      await this.audit.write(client, { actorId: user.subject, action: 'configuration.holiday_updated', targetType: 'holiday', targetId: `${user.country}:${date}`, correlationId, outcome: 'success', metadata: { date, name } });
+      await this.audit.write(client, { actorId: user.subject, action: 'configuration.holiday_updated', targetType: 'holiday', targetId: `${user.country}:${date}`, correlationId, outcome: 'success', metadata: { previous, date, name } });
       return { country: user.country, date, name };
     });
   }
 
   private async startClock(client: PoolClient, ticketId: string, profileKey: string, country: string, receivedAt: Date, correlationId: string, actorId: string): Promise<void> {
-    const profile = (await client.query<ProfileRow>('SELECT profile_key,acknowledge_business_days,final_response_calendar_days,active FROM regulatory_profiles WHERE profile_key=$1', [profileKey])).rows[0];
+    const profile = (await client.query<ProfileRow>('SELECT profile_key,acknowledge_business_days,final_response_calendar_days,active,case_kind FROM regulatory_profiles WHERE profile_key=$1', [profileKey])).rows[0];
     if (!profile || !profile.active) throw new ConflictException('Regulatory profile does not exist or is inactive');
     const holidays = new Set((await client.query<{ d: string }>("SELECT to_char(holiday_date,'YYYY-MM-DD') AS d FROM business_holidays WHERE country=$1", [country])).rows.map((r) => r.d));
     const acknowledgeDueAt = addBusinessDays(receivedAt, profile.acknowledge_business_days, timeZone(), holidays);
     const finalResponseDueAt = new Date(receivedAt.getTime() + profile.final_response_calendar_days * 86_400_000);
-    await client.query("UPDATE tickets SET is_complaint=true, regulatory_profile=$1, acknowledge_due_at=$2, final_response_due_at=$3, regulatory_status='on_track', updated_at=now() WHERE id=$4", [profileKey, acknowledgeDueAt, finalResponseDueAt, ticketId]);
+    await client.query("UPDATE tickets SET is_complaint=$5, case_kind=$6, regulatory_profile=$1, acknowledge_due_at=$2, final_response_due_at=$3, regulatory_status='on_track', updated_at=now() WHERE id=$4", [profileKey, acknowledgeDueAt, finalResponseDueAt, ticketId, profile.case_kind === 'complaint', profile.case_kind]);
     await this.audit.write(client, { actorId, action: 'ticket.regulatory_clock_started', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { profileKey, acknowledgeDueAt: acknowledgeDueAt.toISOString(), finalResponseDueAt: finalResponseDueAt.toISOString() } });
     await this.outbox.enqueue(client, { eventType: 'ticket.regulatory_clock_started', aggregateType: 'ticket', aggregateId: ticketId, correlationId, payload: { ticketId, profileKey, acknowledgeDueAt: acknowledgeDueAt.toISOString(), finalResponseDueAt: finalResponseDueAt.toISOString() } });
   }
@@ -204,11 +228,4 @@ export class ComplianceService {
     return { ticketId: row.id, isComplaint: row.is_complaint, regulatoryProfile: row.regulatory_profile, regulatoryStatus: row.regulatory_status, acknowledgeDueAt: row.acknowledge_due_at, finalResponseDueAt: row.final_response_due_at, vulnerabilityFlag: row.vulnerability_flag, systemicIssue: row.systemic_issue, afcaStatus: row.afca_status };
   }
 
-  private toCsv(rows: Record<string, unknown>[]): string {
-    if (!rows.length) return '';
-    const columns = Object.keys(rows[0]);
-    // Cells beginning with = + - @ would be executed as formulas by spreadsheet software; neutralize them.
-    const cell = (value: unknown) => { let text = value === null || value === undefined ? '' : value instanceof Date ? value.toISOString() : String(value); if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`; return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
-    return [columns.join(','), ...rows.map((row) => columns.map((column) => cell(row[column])).join(','))].join('\n');
-  }
 }

@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { User } from 'oidc-client-ts';
 import { getWorkflows, saveWorkflow, type WorkflowDefinition } from '../api';
+import { AdminSettings } from './admin-settings';
+import { getDeadLetters, getOutboxSummary, replayAllDeadLetters, replayDeadLetter, type OutboxEvent } from '../api';
 import { getHolidays, getRegulatoryProfiles, saveHoliday, saveRegulatoryProfile, type Holiday, type RegulatoryProfile } from '../api';
 import { getAssignmentRules, getCategories, getEscalationRules, getIntakeChannels, getQueueMembers, getQueues, saveAssignmentRule, saveEscalationRule, saveIntakeChannel, saveQueueMember, type AssignmentRule, type EscalationRule, type IntakeChannel, type QueueMember } from '../api';
 
@@ -15,8 +17,9 @@ export function Admin({ user, onError }: { user: User; onError: (message: string
   const [profiles, setProfiles] = useState<RegulatoryProfile[]>([]); const [holidays, setHolidays] = useState<Holiday[]>([]); const [holiday, setHoliday] = useState<Holiday>({ date: '', name: ''});
   const [profile, setProfile] = useState<RegulatoryProfile>({ profileKey: '', label: '', jurisdiction: 'AU', acknowledgeBusinessDays: 1, finalResponseCalendarDays: 30, atRiskDays: 5, active: true });
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]); const [workflowKey, setWorkflowKey] = useState(''); const [workflowJson, setWorkflowJson] = useState('');
+  const [outbox, setOutbox] = useState<Record<string, number>>({}); const [dead, setDead] = useState<OutboxEvent[]>([]);
   const fail = (e: unknown) => onError(e instanceof Error ? e.message : 'Request failed');
-  const reloadRules = () => { void getAssignmentRules(user).then(setAssignment).catch(fail); void getEscalationRules(user).then(setEscalation).catch(fail); void getIntakeChannels(user).then(setChannels).catch(fail); void getRegulatoryProfiles(user).then(setProfiles).catch(fail); void getHolidays(user).then(setHolidays).catch(fail); void getWorkflows(user).then(setWorkflows).catch(fail); };
+  const reloadRules = () => { void getAssignmentRules(user).then(setAssignment).catch(fail); void getEscalationRules(user).then(setEscalation).catch(fail); void getIntakeChannels(user).then(setChannels).catch(fail); void getRegulatoryProfiles(user).then(setProfiles).catch(fail); void getHolidays(user).then(setHolidays).catch(fail); void getWorkflows(user).then(setWorkflows).catch(fail); void getOutboxSummary(user).then(setOutbox).catch(fail); void getDeadLetters(user).then(setDead).catch(fail); };
   const reloadMembers = (key: string) => { if (key) void getQueueMembers(user, key).then(setMembers).catch(fail); else setMembers([]); };
   useEffect(() => {
     void getQueues(user).then((list) => { const keys = list.map((entry) => entry.queue); setQueues(keys); setQueue(keys[0] ?? ''); setRule((current) => ({ ...current, queue: keys[0] ?? '' })); setEsc((current) => ({ ...current, queue: keys[0] ?? '', escalateToQueue: keys[1] ?? '' })); setChannel((current) => ({ ...current, defaultQueue: keys[0] ?? '' })); }).catch(fail);
@@ -32,6 +35,7 @@ export function Admin({ user, onError }: { user: User; onError: (message: string
   const submitHoliday = async (event: FormEvent) => { event.preventDefault(); try { await saveHoliday(user, holiday); setHoliday({ date: '', name: '' }); reloadRules(); } catch (e) { fail(e); } };
   const editWorkflow = (item: WorkflowDefinition) => { setWorkflowKey(item.workflowKey); setWorkflowJson(JSON.stringify({ label: item.label, active: item.active, transitions: item.transitions }, null, 2)); };
   const submitWorkflow = async (event: FormEvent) => { event.preventDefault(); try { const body = JSON.parse(workflowJson) as Omit<WorkflowDefinition, 'workflowKey'>; await saveWorkflow(user, { workflowKey, ...body }); reloadRules(); } catch (e) { fail(e); } };
+  const replay = async (id?: string) => { try { await (id ? replayDeadLetter(user, id) : replayAllDeadLetters(user)); reloadRules(); } catch (e) { fail(e); } };
   const options = (values: string[]) => values.map((value) => <option key={value} value={value}>{value}</option>);
   return <div className="admin-grid">
     <section><h2>Queue members</h2><p className="notice">Members are auto-assignment candidates. Enter the person's identity-provider subject ID.</p>
@@ -92,5 +96,12 @@ export function Admin({ user, onError }: { user: User; onError: (message: string
         <label>Workflow key<input required pattern="[a-z0-9][a-z0-9-]+" value={workflowKey} onChange={(event) => setWorkflowKey(event.target.value)} /></label>
         <label>Definition (JSON)<textarea required rows={10} value={workflowJson} onChange={(event) => setWorkflowJson(event.target.value)} placeholder='{"label":"…","active":true,"transitions":[{"from":"submitted","to":"triage"}]}' /></label>
         <button type="submit">Save workflow</button></form></section>
+      <section><h2>Integration events</h2><p className="notice">Events leave the platform through a reliable queue. If the bank's bus is unavailable they retry, and after five failures they wait here. Fix the cause, then replay.</p>
+      <table><thead><tr>{['pending', 'retry', 'in_flight', 'dead_letter', 'published'].map((status) => <th key={status}>{status.replace('_', ' ')}</th>)}</tr></thead><tbody><tr>{['pending', 'retry', 'in_flight', 'dead_letter', 'published'].map((status) => <td key={status} className={status === 'dead_letter' && outbox[status] ? 'bad' : ''}>{outbox[status] ?? 0}</td>)}</tr></tbody></table>
+      {dead.length ? <>
+        <button onClick={() => void replay()}>Replay all ({dead.length})</button>
+        {dead.map((event) => <article className="note" key={event.id}><strong>{event.eventType}</strong><p>{event.aggregateType} {event.aggregateId.slice(0, 8)} · {event.attempts} attempts · {event.lastError ?? 'failed'}</p><small>{new Date(event.createdAt).toLocaleString()}</small> <button className="secondary" onClick={() => void replay(event.id)}>Replay</button></article>)}
+      </> : <p>No failed events.</p>}</section>
+      <AdminSettings user={user} onError={onError} />
   </div>;
 }

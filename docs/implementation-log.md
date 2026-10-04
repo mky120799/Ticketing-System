@@ -457,3 +457,226 @@ tickets               + is_complaint, regulatory_profile, acknowledge_due_at, fi
 
 **Resume bullets.**
 - Built a tamper-evident audit trail with canonical versioned hashing, scheduled verification, externally published anchors (outbox/object storage), Prometheus alerting metrics and a scoped auditor search; proved detection of timestamp edits, mid-chain deletion and tail truncation with integration tests.
+
+---
+
+## 15. Kafka and object storage verified against real services (and what that found)
+
+**Why.** Entries 2 and 4 described a Kafka publisher and an S3/malware-scan flow that had only been unit-reasoned. Docker was available, so both were run for real.
+
+**Kafka.** Redpanda (Kafka-compatible) was added to `docker-compose.yml` (profiles `kafka`/`app`; internal listener `redpanda:29092`, host listener `localhost:19092` because 9092 was taken by another project). `test/kafka.integration-spec.ts` publishes an outbox record and consumes it, asserting the message key (aggregate ID, so per-ticket order holds on one partition), the JSON envelope (event ID, type, `occurredAt`, payload) and the `event-id`/`event-type`/`correlation-id` headers. The containerised API now runs with `OUTBOX_PUBLISHER=kafka`.
+
+**Object storage and malware scanning.**
+- Local stack: an S3-compatible store (SeaweedFS; MinIO's community images were no longer pullable) and ClamAV (the Debian image, because the default has no arm64 build).
+- `AttachmentScanWorker` streams each uploaded object from storage straight to ClamAV over the INSTREAM protocol (never to local disk) and records the verdict through the same `attachment:scan` path an external scanner would use, so the state machine and audit are identical. A SHA-256 is computed during the stream; a mismatch with the uploader's declared checksum is recorded as a scan error and never released.
+- `test/storage.integration-spec.ts` uploads through a real presigned URL, and proves: a clean file is released and downloadable, the EICAR test virus is marked malicious, a checksum mismatch becomes a scan error, and downloads stay blocked until a clean verdict.
+
+**Real defects found only by running it.**
+1. The AWS SDK v3 adds a default CRC32 checksum to presigned URLs, computed for an *empty* body, so every real browser upload failed with `BadDigest`. Fixed with `requestChecksumCalculation: 'WHEN_REQUIRED'`. This would have broken uploads on real AWS S3 as well.
+2. Forcing `ServerSideEncryption` into every presigned URL is not portable. It is now sent only if `OBJECT_STORAGE_SERVER_SIDE_ENCRYPTION` is explicitly set; default bucket encryption is the preferred control.
+3. Presigned URLs must be signed for an address the browser can reach, which in containers differs from the address the API uses. Added `OBJECT_STORAGE_PUBLIC_ENDPOINT`.
+4. Added an opt-in `OBJECT_STORAGE_CREATE_BUCKET=true` for development only.
+
+**Limits.** The stores used are development stand-ins; the bank's production store, KMS keys, Object Lock policy and scanner fleet are still to be provisioned (see `production-readiness.md`).
+
+---
+
+## 16. Notifications and email (in and out)
+
+**Problem.** Customer communications were governed but never sent, and staff only had live screen updates: no alert when something was assigned to them, an approval was waiting, or a deadline was at risk.
+
+### Staff notifications
+- `notifications` table: a notification targets one person, or everyone holding a **role in a queue** (for example supervisors of the payments queue), scoped to legal entity and country. Read state is **per person** (`notification_reads`), so one supervisor reading does not clear it for another.
+- Created in the same transaction as the causing event: ticket assigned (manual or automatic), approval needed, SLA or regulatory risk (first response overdue, resolution breached, complaint not acknowledged, approaching or past final response), escalation (new queue's supervisors and the previous assignee), and customer replied.
+- Notifications hold a title and a ticket ID only. Opening one loads the ticket through the normal authorized, audited path, so the inbox cannot leak case content.
+- Delivered live: after commit a content-free push tells the matching connected users to refresh, over the existing `LISTEN/NOTIFY` channel, filtered per subscriber.
+- UI: bell with unread badge and a dropdown inbox; clicking opens the ticket.
+
+### Outbound email and SMS
+- Template **subjects and bodies** now live in `communication_templates`, with only two placeholders (`{{ticketRef}}`, `{{status}}`), so a template can never pull other data from a case. Status is shown in customer-friendly words, never internal workflow states.
+- `DeliveryWorker` picks up due `queued` messages, takes a short lease (`FOR UPDATE SKIP LOCKED` plus a pushed-out `next_attempt_at`) so several instances never double-send, renders, sends via SMTP (or an HTTP SMS gateway), and records the result through the **existing delivery-receipt state machine** (`sent`, or `failed` after five backoff attempts). Messages carry `Auto-Submitted: auto-generated` and the case reference in the subject. Blocked cases are never sent (the message is failed with `COMMUNICATION_BLOCKED`).
+- **Contact resolution is a seam.** The platform does not keep customer contact data. `ContactResolver` calls a bank-controlled lookup (`CRM_CONTACT_URL`, returning `{email, mobile}`) for an opaque reference; for development, `ALLOW_DIRECT_ADDRESS_REFERENCES=true` treats the reference as the address. References of the form `mailto:` (created by inbound email for the address a customer wrote from) always resolve.
+
+### Inbound email
+- `InboundEmailWorker` reads unread mail over IMAP and creates tickets through the same intake path as every other channel.
+- **Loop and abuse protection:** automatic mail (`Auto-Submitted`, `Precedence: bulk/junk/list`, `List-Id`, delivery reports, no-reply and mailer-daemon senders, our own address) is ignored; each sender is limited per hour (`EMAIL_MAX_TICKETS_PER_SENDER_HOUR`).
+- **Privacy:** the sender is stored as a keyed pseudonym (`HMAC-SHA256`, key in `EMAIL_REFERENCE_SECRET`), not as an address. The address is held only in the reply reference needed to answer them, inside the protected boundary that retention later redacts.
+- **Threading:** a reply quoting `[CASE-XXXXXXXX]` is attached to that ticket **only if the sender is the person who raised it** (matched by pseudonym); anyone else's message becomes their own ticket. Quoted history is cut, and customer replies move `pending_customer` tickets back to `in_progress` when the workflow allows it. Replies do not count as a staff response, so they cannot stop an SLA clock.
+- **Acknowledgement:** a new email ticket automatically queues the standard acknowledgement (counted as the first response, which also satisfies "acknowledge within one business day"), unless communications are blocked.
+- Attachments are not imported; the ticket records how many were dropped.
+
+### Verified
+`test/email.integration-spec.ts` against a real mail server (GreenMail): email becomes a ticket with a pseudonymous sender, the acknowledgement is delivered to the customer's mailbox with the case reference, a reply is threaded with quoted history removed, an impostor quoting the reference gets a separate ticket, auto-replies, bounces, bulk mail and our own address create nothing, and a flooding sender is capped. The workflow integration spec covers who receives which notification and per-person read state.
+
+### Known limits
+- Delivery receipts beyond `sent` (delivered, bounced) need provider support; plain SMTP only proves hand-off. Bounce handling currently just ignores bounces.
+- No staff email or push, and no per-user preferences or quiet hours.
+- No template editor UI; templates are edited through the configuration API/database.
+- SMS needs the bank's gateway and the CRM lookup needs the bank's endpoint; both are interfaces here.
+
+**Interview summary.** "Notifications reuse the transaction and event machinery already in place: they're written with the change that caused them and pushed after commit, with no content in the push. For email I built a delivery worker with leasing and backoff that reports through the same receipt state machine an external provider would use, a contact-resolver seam so the platform never stores customer addresses, and an inbound worker with loop protection, rate limits, pseudonymous senders and sender-verified reply threading. All of it was tested against a real mail server."
+
+**Resume bullets.**
+- Built bidirectional email integration (IMAP intake with loop/abuse protection and sender-verified threading; SMTP delivery with leasing, backoff and receipts) and a role-aware staff notification inbox delivered over commit-safe live pushes.
+
+---
+
+## 17. Customer portal and customer authentication
+
+**Problem.** Customers could only reach the bank through staff or email. The brief asks for self-service intake from a web portal, which needs its own login, strict isolation from staff data, and a safe way to see progress.
+
+**How a customer registers a complaint.** They sign in, choose "Make a complaint" (or "Make a request or ask a question"), enter a summary and details, and send. The API creates the ticket through the same intake path as email. A complaint is placed in the `complaint` category, so the regulatory clock (entry 8) starts immediately from receipt. The customer sees a reference such as `CASE-1A2B3C4D`, then follows status and staff updates and can reply.
+
+### Identity: two separate worlds
+- A **separate customer realm** (`bank-case-customers-dev`) with its own issuer, signing keys, audience (`bank-case-portal-api`) and client (`bank-case-portal`, authorization code with PKCE). `PortalAuthGuard` accepts only that issuer and audience; the staff guard accepts only the staff ones. Tested both ways: a customer token is rejected by the staff API (401) and a staff token by the portal API (401). A token minted for a different audience is also rejected.
+- Signing algorithms are pinned (RS256, ES256, PS256) on both guards.
+- The portal API is disabled (404) unless `PORTAL_OIDC_ISSUER` is configured.
+- In production the bank would normally plug the portal into its existing online-banking login rather than create new customer accounts; this realm is the development stand-in and the contract (issuer, audience, a stable `sub`) is all the API needs.
+
+### What the API exposes (`/v1/portal/*`)
+- `POST /requests` (idempotent via `Idempotency-Key`), `GET /requests`, `GET /requests/{id}`, `POST /requests/{id}/messages`.
+- A customer's identity becomes the opaque ticket reference `PORTAL-<account id>`. Every query is keyed by it, and only tickets that came through the portal are visible; someone else's ticket ID returns 404, never 403, so existence is not revealed.
+- **Shown:** subject, the customer's own description, a friendly status (received, being worked on, waiting for your reply, resolved), complaint acknowledgement state and the final-response date, staff messages marked customer-visible, and messages staff sent over the portal channel.
+- **Never shown:** internal notes, queues, assignees, SLA or escalation data, sensitivity, flags, or anything about tickets created by other means. A test asserts none of those words appear in responses.
+- **Replies** are stored as the customer's own words, do not count as a staff response (so they can't stop a clock), move a ticket waiting on the customer back to in progress when the workflow allows, and notify the people working it. The logic is shared with email in `CustomerReplyService`.
+- **Abuse limits:** 10 new requests and 30 messages per customer per hour (configurable), plus the global rate limit and body cap.
+- **Staff → customer messages:** a staff user queues a `portal_update` communication; the server takes the recipient from the ticket itself (never typed in), and the delivery worker marks the portal channel delivered because the customer reads it there.
+
+### The web app (`apps/portal`)
+A small separate React app and container (own image, same runtime-configuration approach as the staff console): sign in, raise a request or complaint, list history, view progress and updates, reply. Built with accessibility in mind (labelled fields, fieldset/legend for the choice, live regions for confirmations and errors, focus moved to the heading when a request opens, visible focus ring, plain wording, a hint not to include card numbers or PINs). It has not yet had a formal accessibility audit.
+
+### Delivery
+Compose service `portal` on port 5174, Keycloak imports the customer realm automatically, and the Helm chart gained a portal Deployment, Service, Ingress on its own host, network policy, and the customer-IdP settings.
+
+### Known limits
+- No customer attachments yet; no identity verification of the customer (the bank's process); no customer-facing notifications by email on portal tickets beyond what staff send.
+- The portal user must already exist in the customer IdP; self-registration is deliberately off.
+- Rate limits are per customer account and per server instance.
+
+**Interview summary.** "The portal is a thin, separately authenticated front end over the same intake path as every other channel. Customer and staff identities use different issuers and audiences, so a token for one can't be used on the other. Every portal query is keyed by the customer's own identity, returns 404 for anything else, and exposes a deliberately narrow view of the case. Replies reuse the same service as email, so the behaviour and the audit trail match."
+
+**Resume bullets.**
+- Built a customer self-service portal with an isolated customer identity realm, ownership-scoped API (404 on foreign IDs), per-customer rate limits and an accessible React front end, reusing the shared intake and reply services.
+
+---
+
+## 18. Authentication hardening
+
+Everything here is configuration-driven so development stays simple and production turns it on. All of it was verified: unit tests for each control, and the live stack against real Keycloak realms.
+
+| Control | How it works | Setting |
+|---|---|---|
+| **Pinned signing algorithms** | Only RS256, ES256 and PS256 are accepted on both the staff and customer guards; symmetric (HS256) tokens signed with any shared secret are rejected (tested). | always on |
+| **Authorized-party check** | The token's `azp`/`client_id` must be one of the applications we expect, so a token minted for another app that happens to share the audience is refused. | `AUTH_ALLOWED_CLIENTS` |
+| **Revocation (introspection)** | The API asks the IdP whether the token is still active (RFC 7662), caching the answer for a few seconds. If the user is disabled or the session ended, the token stops working within that window even though it has not expired. If the lookup fails, requests are refused (fail-closed) unless explicitly set to fail open. Verified live: after ending a user's session in Keycloak, the old token went from 200 to 401 within the cache window, while a new login worked. | `AUTH_INTROSPECTION_*` |
+| **Central entitlements** | Optionally the bank's entitlement service decides roles, queues, branch, department, entity and country, falling back to token claims for anything it omits. A change there applies within a minute instead of at next login; a user the service doesn't know gets no access. | `ENTITLEMENT_URL` |
+| **Step-up authentication** | Revealing references, approving or rejecting, legal-hold changes, subject-access export, complaints-register export and audit export require a login within `STEP_UP_MAX_AGE_SECONDS` (from the `auth_time` claim) and/or an accepted `acr` level. Failure returns `403` with code `step_up_required`; the console shows "Sign in again", which asks the IdP for a fresh login (`max_age=0`). Service identities are exempt. | `STEP_UP_*` |
+| **Silent token renewal** | The staff console and portal renew tokens in the background and update the live stream, so people are not logged out mid-shift; a session the IdP ends signs the user out. | on |
+
+**Other findings from running it for real.** Keycloak compares a token's issuer with the host a request arrives on, so introspection from inside the container failed until the IdP's public hostname was pinned (`KC_HOSTNAME`), which is also the correct production setup. Tokens obtained by the password grant carry no `auth_time`, so step-up only passes for browser logins; that is correct behaviour and the reason step-up is switched on per environment.
+
+**Not code, but required.** Signed-JWT or mTLS client authentication for service identities, MFA and conditional access, idle timeout and concurrent-session limits are configured at the bank's identity provider; the API validates whatever tokens result. The development realm and its demo logins must never reach a shared environment.
+
+**Known limits.** A backend-for-frontend with HTTP-only cookies would reduce token exposure in the browser further than session storage; it is a larger change and optional. Introspection adds a call per token per cache window, so keep the cache short but non-zero.
+
+**Interview summary.** "I hardened authentication in layers that each fail safe: pinned algorithms, an allow-list of client applications, optional revocation checks against the IdP, optional central entitlements, and step-up on the few actions that reveal or export data. I proved revocation against a real Keycloak and found along the way that issuer consistency depends on the IdP's public hostname."
+
+---
+
+## 19. Audit hardening: restricted database account, richer context, before/after values, SIEM stream, signed anchors, archival
+
+Entry 14 made the trail provable. This entry closes the gaps a bank's auditor would raise next. Every control below is covered by an integration test that attacks it.
+
+**1. The application cannot tamper, even if it is compromised.** PostgreSQL lets a table's owner disable its triggers or rewrite it, and the application used to run as the owner. `infra/postgres/roles.sql` splits two accounts: `case_owner` owns the schema and runs migrations; `case_app` is what the API connects as. `case_app` can add and read audit events but has no UPDATE, DELETE or TRUNCATE on the audit tables and is not the owner, so it cannot disable triggers or drop the table. A statement-level trigger also blocks TRUNCATE for everyone. At start-up the API asks the database what its own account can do and reports `audit_runtime_role_safe`; `AUDIT_REQUIRE_RESTRICTED_DB_ROLE=true` makes it refuse to start otherwise. The test creates both roles, runs the migrations as the owner, then proves the app account is refused on update, delete, truncate, disable-trigger and drop, while still doing everyday work.
+
+**2. Richer actor context.** Every audit event now carries source IP, user agent, token ID and authentication level for the request that caused it (stored in the hashed metadata, so it is tamper-evident). Implemented with `AsyncLocalStorage` and a request hook, so no service had to be changed to pass it along. System actors (timer, workers) have no request, so they record none.
+
+**3. Before and after values.** Ticket edits record old and new priority, which custom fields changed, and, for free text, only that it changed with old/new length and SHA-256 fingerprints, so the immutable trail proves the edit without storing content that retention might later need to remove. Assignments record from/to queue, assignee and status. Retention changes record the previous hold and date. Every configuration change (queues, categories, SLA, templates, routing rules, intake channels, regulatory profiles, holidays, workflows) records the previous row.
+
+**4. Live feed to the SIEM.** With `AUDIT_STREAM_ENABLED=true` each audit event is also written to the outbox in the same transaction and published (topic `<prefix>.audit`), so the SIEM receives events as they happen and deleting recent events from the database can no longer hide them. Metadata is excluded unless `AUDIT_STREAM_INCLUDE_METADATA=true`, because it can contain staff-typed reasons.
+
+**5. Signed anchors.** Anchors are signed with Ed25519 (`AUDIT_ANCHOR_SIGNING_PRIVATE_KEY`; keys from `scripts/generate-anchor-keys.mjs`) and verified with the public key. Once a signed anchor exists, every later anchor must be signed, so stripping a signature to hide a forgery is itself detected; anchors from before signing was enabled are still accepted. The signer is a small module that a bank can replace with a KMS/HSM call.
+
+**6. Archival that keeps the chain verifiable.** Audit data must be kept for years, but the live table cannot grow forever, and removing old events used to look like tampering. `scripts/archive-audit.mjs` (run by the owner account, never the app) re-verifies the range it is about to archive and refuses a damaged one, writes it to a JSON-lines file with a manifest holding the file's SHA-256, records the newest archived event as the chain's new **base**, and deletes the range with the append-only triggers switched off for that one transaction only. The verifier then starts from the base, and anchors older than the base are no longer expected. Archiving the newest event is refused. A separate, deliberate `--accept-start` records an existing damaged start as trusted (for a database whose early events are already gone), explicitly accepting that earlier history cannot be verified. Tested: archive, verify valid, protections back on, and tampering after the archive is still caught.
+
+**Restore verification.** After any database restore run `POST /v1/audit/verify?full=true` and compare the head with the last published anchor; an old backup will fail the anchor check, which is the point.
+
+**Known limits.** The hash chain and the API share a database, so the signing key and the anchor destination must live somewhere database administrators cannot reach. Archive files must be kept in write-once storage by the bank. Failed validations (HTTP 400) are not audited by design; failed logins belong to the IdP and gateway. The single audit write lock remains.
+
+**Interview summary.** "I assumed the application itself could be compromised and made the audit trail survive that: the app's database account physically cannot alter it, each event is streamed to the SIEM and hash-chained with its timestamp, anchors are signed and published off-database, and archiving old events is an owner-run, verified procedure that records a new trusted base. Every one of those claims has a test that tries to break it."
+
+**Resume bullets.**
+- Hardened a banking audit trail against insider and application compromise (least-privilege database roles proven by test, Ed25519-signed external anchors, SIEM streaming, verified archival with chain rebasing, request-context and before/after capture).
+
+---
+
+## 20. Operations and scale: dead letters, concurrency, paging, trends, reporting feed, scheduled exports
+
+| Capability | What it does | Notes |
+|---|---|---|
+| **Dead-letter tooling** | `GET /operations/outbox/summary` and `/events`, `POST /operations/outbox/events/{id}/replay` and `/replay` (administrator). Events that failed five times can be returned to the queue with a fresh retry budget once the cause is fixed. Each replay is audited. Listing shows IDs and errors, never payloads. Admin screen shows counts per state and replay buttons. | Alert on the existing `outbox_events{status="dead_letter"}` metric. |
+| **Optimistic concurrency** | Edit, assign and status-change requests may carry `expectedUpdatedAt`. If someone else changed the ticket since it was loaded, the API returns `409 stale_ticket` and the console refreshes the ticket and says so, instead of silently overwriting. | The console sends it on status changes. |
+| **Paged ticket lists** | `GET /tickets?limit&cursor` is keyset-paginated (newest first, stable even as tickets arrive) with a new covering index; the next cursor is returned in the `X-Next-Cursor` header so the response shape did not change. The console has "Load more". | Tested: pages don't overlap and walking all pages finds everything. |
+| **Trends** | `GET /dashboard/trends?weeks=N` returns weekly created, resolved, complaints and escalations plus breakdowns by category, branch and queue, scoped to the caller, audited. Dashboard shows tables with comparison bars. | |
+| **Reporting data feed** | A read-only `reporting` schema (views for tickets, status history, escalations, communications) containing classifications, dates, outcomes and opaque IDs only: no subject, description, notes, references or free text. `infra/postgres/roles.sql` creates a `case_reporting` account that can read only these views. Tested: it is refused on `tickets`, notes and audit tables. | The bank's BI tool connects here instead of to case data. |
+| **Scheduled exports** | Daily (`REPORT_EXPORT_ENABLED=true`) the complaints register for the last 30 days and weekly volumes are written as CSV to object storage per legal entity and country (`reports/<entity>-<country>/<date>/...`). Tested end to end against object storage; the free text of a complaint is verified absent from the file. | |
+| **Delivery metrics** | `communications{status}` gauge for queued, sent, delivered and failed messages. | |
+
+**Findings from testing.** Any action with no body but a JSON content type (such as "replay") was rejected with 400, which would have broken the console's own buttons; the server now treats an empty JSON body as `{}`. The schema owner needs permission to create schemas, which the role script now grants.
+
+**Limits.** Paging applies to the list, not search (search remains a bounded top-50). Reporting views are not row-filtered by entity; a multi-entity deployment should give each reporting account only its own entity's data (single-tenant per bank makes this a non-issue). Scheduled exports are per entity/country across all queues.
+
+---
+
+## 21. Browser testing, accessibility, and what actually running it found
+
+Until now no screen had been exercised in a real browser. `e2e/` holds Playwright tests that sign in through the real Keycloak pages and drive the staff console and the portal, with axe-core WCAG 2.1 A/AA checks (serious and critical violations fail the test) on the portal sign-in, home and request detail, and the staff sign-in, workspace, dashboard, administration and audit screens.
+
+**Defects found by the browser and container runs, all fixed:**
+1. **The staff console's "Create ticket" form had never worked.** It sent the reference fields both loose and inside `references`; the API correctly rejected the extras. No API test could see it.
+2. **Colour contrast** on the status chips (green, amber, red) failed WCAG AA; the colours were darkened.
+3. **Buttons with no body failed** (any POST carrying a JSON content type but no body returned 400). Fixed server-side by accepting empty JSON bodies using Nest's own body-parser hook. A first attempt using the raw Fastify hook crashed the real container at start-up and was only caught because the container was run, not just the tests.
+4. **Connection-pool deadlock under load.** A stress test (many concurrent writers) hung: some code paths asked the pool for a second database connection while already holding one inside a transaction, and `pg` waits forever by default. Fixed the nested use, and made the pool bounded and fail-fast (`DATABASE_POOL_MAX`, connection, statement and idle-in-transaction timeouts). With the fix the audit chain stays valid under concurrent writers, even with a pool of 4.
+5. **Duplicate accessible names** in the portal (a heading and a region both named "Details") was found by the tests; tests now target the field by role.
+
+**What this does not replace.** It is an automated check, not an accessibility audit: axe finds roughly a third of real issues. A specialist review with assistive technology, keyboard-only walk-throughs and user testing with people who use screen readers is still required (see `production-readiness.md`).
+
+**Interview summary.** "I treated 'it compiles and the unit tests pass' as insufficient: I ran the containers and a real browser against real identity providers. That found a create-ticket form that had never worked, a deployment crash, a connection-pool deadlock under concurrency, and contrast failures, none of which the earlier tests could see."
+
+---
+
+## 22. Hardening round: production safety guard, event catalogue, and a readable console
+
+- **Production safety guard.** In production mode the API refuses to start if it is pointed at a local or development identity provider, uses the development database password or secrets, has no client allow-list, or is not required to run as the restricted database account, and it lists every problem at once. `ALLOW_DEV_SETTINGS=true` is the explicit override used only by the local container stack. This turns "the development realm must never reach a shared environment" from a warning into a control. Unit tested.
+- **Event catalogue.** `docs/events.md` is generated from the source (a brace-aware scanner over every `outbox.enqueue`), listing 40 events with their aggregate, payload fields, envelope, topic and key, ordering and compatibility rules, so integrators (and any future schema registry) have one accurate reference that cannot drift. Regenerate with `node apps/api/scripts/generate-event-catalogue.mjs`.
+- **Console structure.** The staff console's single main file (one line was 9,149 characters) is now a ~60-line shell plus two hooks (`use-session`, `use-workspace`) and focused components (create, list, detail, notes and status, communications, retention). The browser tests pass unchanged, which is the evidence that behaviour was preserved.
+
+---
+
+## 23. Operations documentation and a measured performance baseline
+
+Added `docs/capacity.md` (load-test results and storage growth, measured with `loadtest/`), `docs/disaster-recovery.md` (what to protect, recovery steps including proving audit integrity after a restore), `docs/runbooks.md` (alert-to-action procedures for every signal the platform emits) and `docs/user-guide.md` (by role). The load test showed ~230 ticket creations per second, ~950 audited list requests per second, zero errors, and a **valid audit chain after ~34,000 events written under concurrency**, which is the property that matters most and the one concurrency bugs would break.
+
+---
+
+## 24. SLA calendars, pause rules, admin screens for settings, supply-chain pinning
+
+- **Business-hours SLAs.** A policy can count `business` minutes instead of wall-clock ones. Deadlines skip weekends, public holidays and time outside the country's working hours (time zone aware, daylight-saving safe: `addBusinessMinutes`, unit tested across a daylight-saving boundary). Working hours per country are configuration (`business_hours`, seeded for AU and IN); a policy with `wall` (the default) behaves exactly as before.
+- **Pause while waiting for the customer.** A policy may stop the clock when a ticket moves to `pending_customer`. On resume (status change or the customer replying by email or portal) the deadlines move out by the time spent waiting, the status shows `paused` meanwhile, and the breach escalation ignores paused tickets. Regulatory (complaint) clocks are deliberately **not** paused: the regulator's deadline runs from receipt. Tested end to end: a business-hours deadline lands inside working hours, and a two-hour pause moves the deadline out by two hours.
+- **Admin screens** for SLA policies (minutes, calendar, pause), business hours, and **message templates** (subject and body with a live preview). Templates accept only the placeholders `{{ticketRef}}` and `{{status}}`, validated server-side, so wording can never pull other case data into a customer message. Previously these were only reachable through the API.
+- **Operational signals.** New metrics `attachments_pending_scan` and `attachments_oldest_pending_scan_seconds`, so a scanner outage is visible (downloads stay blocked meanwhile).
+- **Supply chain.** Container base images are pinned to exact digests, and a Dependabot configuration proposes weekly updates for npm packages, base images and CI actions, each running the full CI before merge.
+
+---
+
+## 25. Alert rules and the Privacy Act correction workflow
+
+**Alert rules.** `deploy/monitoring/alert-rules.yaml` holds 12 Prometheus alert rules that match `docs/runbooks.md` one-for-one: audit chain invalid or stale, restricted-account check failing, dead-lettered and growing outbox events, customer messages not sending or failing, attachment scans stuck, API error rate and latency, API down, and breached deadlines. They were validated with `promtool` and ship with the Helm chart as a `PrometheusRule` (`metrics.prometheusRule.enabled`).
+
+**Request to correct personal information (Privacy Act APP 13).** A second kind of regulated request alongside complaints, built on the same clock machinery rather than a parallel system:
+- A regulatory profile now has a **kind** (`complaint` or `privacy_request`). The seeded Australian profile `au-app13-correction` acknowledges within 5 business days and responds within 30 days; the `privacy-correction` category uses it.
+- Clocks, status recomputation, escalation triggers and notifications now key off "has a regulatory profile" instead of "is a complaint", so both kinds are timed, escalated and notified identically. Complaints stay the only kind in the **complaints register** and the complaint tiles; the dashboard reports privacy requests separately.
+- **Resolution needs an outcome that fits the kind**: complaints use the complaint outcomes; privacy requests use `corrected`, `corrected_with_statement` or `refused_with_reasons` (APP 13 requires a statement when a correction is refused or the customer asks for one). A complaint outcome on a privacy request is rejected, and vice versa. Tested.
+- The customer portal offers "Ask us to correct information we hold about me", shows the same acknowledgement and final-response dates, and the staff console shows the right outcome choices.
+
+**Test hygiene.** The older ticket suite now isolates itself from events other suites leave behind, so all seven suites pass together against shared live services (28 integration tests), alongside 33 unit tests and 5 browser tests.

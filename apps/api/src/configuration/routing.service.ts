@@ -37,10 +37,11 @@ export class RoutingConfigurationService {
     this.policy.assertPermission(user, 'configuration:write');
     if (!/^[A-Za-z0-9._:@-]{1,160}$/.test(userId)) throw new ConflictException('User ID is invalid');
     return this.db.transaction(async (client) => {
+      const previous = await this.audit.previous(client, 'queue_members', 'queue_key=$1 AND user_id=$2', [queueKey, userId]);
       await this.assertQueueInScope(client, user, queueKey);
       await client.query(`INSERT INTO queue_members (queue_key,user_id,active,updated_by) VALUES ($1,$2,$3,$4)
         ON CONFLICT (queue_key,user_id) DO UPDATE SET active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()`, [queueKey, userId, dto.active, user.subject]);
-      await this.record(client, user, correlationId, 'queue_member', 'queue_member', `${queueKey}:${userId}`, { queue: queueKey, userId, active: dto.active });
+      await this.record(client, user, correlationId, 'queue_member', 'queue_member', `${queueKey}:${userId}`, { queue: queueKey, userId, active: dto.active, previous });
       return { queue: queueKey, userId, active: dto.active };
     });
   }
@@ -49,6 +50,7 @@ export class RoutingConfigurationService {
     this.policy.assertPermission(user, 'configuration:write');
     this.assertKey(ruleKey);
     return this.db.transaction(async (client) => {
+      const previous = await this.audit.previous(client, 'assignment_rules', 'rule_key=$1', [ruleKey]);
       await this.assertQueueInScope(client, user, dto.queue);
       if (dto.category) {
         const category = await client.query('SELECT 1 FROM ticket_categories WHERE category_key=$1 AND active=true', [dto.category]);
@@ -59,7 +61,7 @@ export class RoutingConfigurationService {
         ON CONFLICT (rule_key) DO UPDATE SET queue_key=EXCLUDED.queue_key, category=EXCLUDED.category, priority=EXCLUDED.priority, strategy=EXCLUDED.strategy, sort_order=EXCLUDED.sort_order, active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()`,
       [ruleKey, dto.queue, dto.category ?? null, dto.priority ?? null, dto.strategy, dto.sortOrder, dto.active, user.subject]);
       const view = { ruleKey, queue: dto.queue, category: dto.category ?? null, priority: dto.priority ?? null, strategy: dto.strategy, sortOrder: dto.sortOrder, active: dto.active };
-      await this.record(client, user, correlationId, 'assignment_rule', 'assignment_rule', ruleKey, view);
+      await this.record(client, user, correlationId, 'assignment_rule', 'assignment_rule', ruleKey, { ...view, previous });
       return view;
     });
   }
@@ -69,6 +71,7 @@ export class RoutingConfigurationService {
     this.assertKey(ruleKey);
     if (dto.queue === dto.escalateToQueue) throw new ConflictException('A queue cannot escalate to itself');
     return this.db.transaction(async (client) => {
+      const previous = await this.audit.previous(client, 'escalation_rules', 'rule_key=$1', [ruleKey]);
       await this.assertQueueInScope(client, user, dto.queue);
       await this.assertQueueInScope(client, user, dto.escalateToQueue);
       await this.assertRuleOwnedInScope(client, user, 'escalation_rules', ruleKey);
@@ -76,7 +79,7 @@ export class RoutingConfigurationService {
         ON CONFLICT (rule_key) DO UPDATE SET queue_key=EXCLUDED.queue_key, trigger=EXCLUDED.trigger, escalate_to_queue=EXCLUDED.escalate_to_queue, raise_priority=EXCLUDED.raise_priority, active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()`,
       [ruleKey, dto.queue, dto.trigger, dto.escalateToQueue, dto.raisePriority, dto.active, user.subject]);
       const view = { ruleKey, queue: dto.queue, trigger: dto.trigger, escalateToQueue: dto.escalateToQueue, raisePriority: dto.raisePriority, active: dto.active };
-      await this.record(client, user, correlationId, 'escalation_rule', 'escalation_rule', ruleKey, view);
+      await this.record(client, user, correlationId, 'escalation_rule', 'escalation_rule', ruleKey, { ...view, previous });
       return view;
     });
   }
@@ -92,6 +95,7 @@ export class RoutingConfigurationService {
     this.policy.assertPermission(user, 'configuration:write');
     if (!['email', 'portal', 'mobile', 'phone', 'internal'].includes(channel)) throw new ConflictException('Unknown intake channel');
     return this.db.transaction(async (client) => {
+      const previous = await this.audit.previous(client, 'intake_channels', 'channel_key=$1', [channel]);
       await this.assertQueueInScope(client, user, dto.defaultQueue);
       const category = await client.query('SELECT 1 FROM ticket_categories WHERE category_key=$1 AND active=true', [dto.defaultCategory]);
       if (!category.rowCount) throw new ConflictException('Default category does not exist or is inactive');
@@ -101,7 +105,7 @@ export class RoutingConfigurationService {
         ON CONFLICT (channel_key) DO UPDATE SET default_category=EXCLUDED.default_category, default_queue=EXCLUDED.default_queue, branch_code=EXCLUDED.branch_code, default_priority=EXCLUDED.default_priority, active=EXCLUDED.active, updated_by=EXCLUDED.updated_by, updated_at=now()`,
       [channel, dto.defaultCategory, dto.defaultQueue, dto.branchCode, dto.defaultPriority, dto.active, user.subject]);
       const view = { channel, defaultCategory: dto.defaultCategory, defaultQueue: dto.defaultQueue, branchCode: dto.branchCode, defaultPriority: dto.defaultPriority, active: dto.active };
-      await this.record(client, user, correlationId, 'intake_channel', 'intake_channel', channel, view);
+      await this.record(client, user, correlationId, 'intake_channel', 'intake_channel', channel, { ...view, previous });
       return view;
     });
   }

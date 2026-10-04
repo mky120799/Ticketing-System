@@ -4,6 +4,7 @@ import { OutboxService } from '../outbox/outbox.service.js';
 import { AttachmentStorageService } from '../storage/attachment-storage.service.js';
 import { AuditService } from './audit.service.js';
 import { computeEventHashV2 } from './audit-hash.js';
+import { signAnchor, verifyAnchorSignature } from './anchor-signer.js';
 
 export const AUDIT_INTEGRITY_ACTOR = 'system:audit-integrity';
 const BATCH = 5000;
@@ -31,7 +32,11 @@ export class AuditIntegrityService {
    */
   async verify(full = false): Promise<VerificationResult> {
     const last = full ? undefined : (await this.db.query<{ verified_through_sequence: string; head_hash: string | null }>("SELECT verified_through_sequence,head_hash FROM audit_verifications WHERE status='valid' ORDER BY id DESC LIMIT 1")).rows[0];
-    let cursor = last ? Number(last.verified_through_sequence) : 0; let expectedPrevious = last?.head_hash ?? null;
+    // Events archived out of the live table leave a recorded base; the remaining chain must link to it.
+    const base = (await this.db.query<{ sequence: string; event_hash: string }>('SELECT sequence,event_hash FROM audit_chain_bases ORDER BY sequence DESC LIMIT 1')).rows[0];
+    const baseSequence = base ? Number(base.sequence) : 0;
+    const resume = last && Number(last.verified_through_sequence) >= baseSequence ? last : undefined;
+    let cursor = resume ? Number(resume.verified_through_sequence) : baseSequence; let expectedPrevious = resume ? resume.head_hash : (base?.event_hash ?? null);
     let checked = 0; let legacy = 0; let headHash = expectedPrevious; let failure: { sequence: number; reason: string } | null = null;
     for (;;) {
       const rows = (await this.db.query<Row>('SELECT sequence,id,occurred_at,actor_id,action,target_type,target_id,correlation_id,outcome,metadata,previous_hash,event_hash,hash_version FROM audit_events WHERE sequence > $1 ORDER BY sequence LIMIT $2', [cursor, BATCH])).rows;
@@ -79,17 +84,29 @@ export class AuditIntegrityService {
     const lastAnchor = (await this.db.query<{ sequence: string }>('SELECT sequence FROM audit_anchors ORDER BY sequence DESC LIMIT 1')).rows[0];
     if (lastAnchor && Number(lastAnchor.sequence) >= verification.verifiedThroughSequence) return { anchored: false };
     const sequence = verification.verifiedThroughSequence; const headHash = verification.headHash; const createdAt = new Date().toISOString();
-    const objectKey = await this.storage.putJson(`audit-anchors/${String(sequence).padStart(12, '0')}.json`, { sequence, headHash, anchoredAt: createdAt }).catch(() => null);
+    const signature = signAnchor(sequence, headHash, createdAt);
+    const objectKey = await this.storage.putJson(`audit-anchors/${String(sequence).padStart(12, '0')}.json`, { sequence, headHash, anchoredAt: createdAt, signature }).catch(() => null);
     await this.db.transaction(async (client) => {
-      await client.query('INSERT INTO audit_anchors (sequence,head_hash,object_key) VALUES ($1,$2,$3) ON CONFLICT (sequence) DO NOTHING', [sequence, headHash, objectKey]);
-      await this.audit.write(client, { actorId: AUDIT_INTEGRITY_ACTOR, action: 'audit.anchor_created', targetType: 'audit_chain', targetId: 'chain', correlationId, outcome: 'success', metadata: { sequence, headHash, storedExternally: Boolean(objectKey) } });
+      await client.query('INSERT INTO audit_anchors (sequence,head_hash,object_key,signature,signed_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (sequence) DO NOTHING', [sequence, headHash, objectKey, signature, createdAt]);
+      await this.audit.write(client, { actorId: AUDIT_INTEGRITY_ACTOR, action: 'audit.anchor_created', targetType: 'audit_chain', targetId: 'chain', correlationId, outcome: 'success', metadata: { sequence, headHash, storedExternally: Boolean(objectKey), signed: Boolean(signature) } });
       await this.outbox.enqueue(client, { eventType: 'audit.anchor_created', aggregateType: 'audit_chain', aggregateId: 'chain', correlationId, payload: { sequence, headHash } });
     });
     return { anchored: true, sequence };
   }
 
   private async checkAnchors(): Promise<{ sequence: number; reason: string } | null> {
-    const mismatches = await this.db.query<{ sequence: string }>('SELECT a.sequence FROM audit_anchors a LEFT JOIN audit_events e ON e.sequence=a.sequence WHERE e.event_hash IS DISTINCT FROM a.head_hash ORDER BY a.sequence LIMIT 1');
-    return mismatches.rows[0] ? { sequence: Number(mismatches.rows[0].sequence), reason: 'A published anchor no longer matches the audit trail: events were deleted or rewritten' } : null;
+    // Anchors older than the archive base refer to events that were archived on purpose; only newer ones must still match.
+    const mismatches = await this.db.query<{ sequence: string }>("SELECT a.sequence FROM audit_anchors a LEFT JOIN audit_events e ON e.sequence=a.sequence WHERE a.sequence > COALESCE((SELECT max(sequence) FROM audit_chain_bases), 0) AND e.event_hash IS DISTINCT FROM a.head_hash ORDER BY a.sequence LIMIT 1");
+    if (mismatches.rows[0]) return { sequence: Number(mismatches.rows[0].sequence), reason: 'A published anchor no longer matches the audit trail: events were deleted or rewritten' };
+    const signed = await this.db.query<{ sequence: string; head_hash: string; signed_at: string | null; signature: string | null }>("SELECT sequence,head_hash,signed_at,signature FROM audit_anchors WHERE sequence > COALESCE((SELECT max(sequence) FROM audit_chain_bases), 0) ORDER BY sequence");
+    // Anchors published before signing was switched on may be unsigned; once a signed anchor exists, every later one must be signed
+    // (otherwise someone could strip a signature to hide a forged anchor).
+    const firstSigned = signed.rows.find((anchor) => anchor.signature !== null);
+    for (const anchor of signed.rows) {
+      const unsignedLegacy = anchor.signature === null && (!firstSigned || Number(anchor.sequence) < Number(firstSigned.sequence));
+      if (unsignedLegacy) continue;
+      if (verifyAnchorSignature(Number(anchor.sequence), anchor.head_hash, anchor.signed_at, anchor.signature) === false) return { sequence: Number(anchor.sequence), reason: 'An anchor signature is missing or does not verify against the configured public key' };
+    }
+    return null;
   }
 }

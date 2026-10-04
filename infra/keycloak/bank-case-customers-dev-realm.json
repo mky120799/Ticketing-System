@@ -1,0 +1,27 @@
+{
+  "realm": "bank-case-customers-dev",
+  "enabled": true,
+  "displayName": "Bank customers (development only)",
+  "registrationAllowed": false,
+  "clients": [{
+    "clientId": "bank-case-portal",
+    "name": "Customer Portal",
+    "publicClient": true,
+    "standardFlowEnabled": true,
+    "directAccessGrantsEnabled": false,
+    "redirectUris": ["http://localhost:5174/*"],
+    "webOrigins": ["http://localhost:5174"],
+    "attributes": { "pkce.code.challenge.method": "S256" },
+    "protocolMappers": [{
+      "name": "audience-bank-case-portal-api",
+      "protocol": "openid-connect",
+      "protocolMapper": "oidc-audience-mapper",
+      "consentRequired": false,
+      "config": { "included.client.audience": "bank-case-portal-api", "access.token.claim": "true", "id.token.claim": "false" }
+    }]
+  }],
+  "users": [
+    { "username": "local-customer", "enabled": true, "emailVerified": true, "firstName": "Local", "lastName": "Customer", "email": "customer@bank-case.example.test", "credentials": [{ "type": "password", "value": "local-dev-only-change-me", "temporary": false }] },
+    { "username": "local-customer-2", "enabled": true, "emailVerified": true, "firstName": "Second", "lastName": "Customer", "email": "customer2@bank-case.example.test", "credentials": [{ "type": "password", "value": "local-dev-only-change-me", "temporary": false }] }
+  ]
+}

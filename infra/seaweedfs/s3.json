@@ -1,0 +1,5 @@
+{
+  "identities": [
+    { "name": "local-dev", "credentials": [{ "accessKey": "local-s3", "secretKey": "local-s3-change-me" }], "actions": ["Admin", "Read", "Write", "List", "Tagging"] }
+  ]
+}
