@@ -10,3 +10,5 @@ button { font: inherit; padding: .65rem 1rem; border: 0; border-radius: .4rem; b
 .list { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; } .item { width: 100%; text-align: left; display: grid; gap: .2rem; background: #eaf3fb; color: #15243b; } .item[aria-current=true] { outline: 2px solid #075a9c; } .item span, .item small { color: #3b5670; }
 .notice { background: #e8f4ec; padding: .75rem; border-radius: .4rem; } .error { background: #fde0de; color: #7a1a1a; padding: .75rem; border-radius: .4rem; } .hint { font-size: .85rem; color: #3b5670; margin: 0; }
 .updates { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .6rem; } .updates li { padding: .6rem .8rem; border-radius: .4rem; background: #f3f6fa; border-left: 4px solid #075a9c; } .updates li.you { border-left-color: #1a7f4b; } .pre { white-space: pre-wrap; margin: .25rem 0; } small { color: #3b5670; }
+
+.documents { list-style: none; margin: 0 0 1rem; padding: 0; display: grid; gap: .4rem; }

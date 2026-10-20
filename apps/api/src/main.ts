@@ -19,7 +19,7 @@ async function bootstrap(): Promise<void> {
   registerRequestContext(app.getHttpAdapter().getInstance());
   acceptEmptyJsonBodies(app);
   app.setGlobalPrefix('v1');
-  app.enableCors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : false, credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], allowedHeaders: ['authorization', 'content-type', 'idempotency-key', 'x-correlation-id'], exposedHeaders: ['x-next-cursor'], maxAge: 600 });
+  app.enableCors({ origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : false, credentials: true, methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'], allowedHeaders: ['authorization', 'content-type', 'idempotency-key', 'x-correlation-id', 'x-upload-token'], exposedHeaders: ['x-next-cursor'], maxAge: 600 });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   await app.listen({ port: Number(process.env.PORT ?? 3000), host: '0.0.0.0' });
 }

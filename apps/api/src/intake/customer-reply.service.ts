@@ -7,7 +7,7 @@ import { NotificationsService } from '../notifications/notifications.service.js'
 import { OutboxService } from '../outbox/outbox.service.js';
 import { WorkflowDefinitionService } from '../workflow/workflow-definition.service.js';
 
-export type ReplyChannel = 'email' | 'portal';
+export type ReplyChannel = 'email' | 'portal' | 'link';
 
 /**
  * Adds a customer's own message to their ticket. Shared by email and portal so both behave identically: the message is

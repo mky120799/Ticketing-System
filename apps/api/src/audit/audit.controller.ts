@@ -30,7 +30,7 @@ export class AuditController {
 
   /**
    * Cross-ticket search for auditors. Limited to events about tickets in the auditor's entity, country and queues,
-   * excluding restricted-sensitivity tickets (those need supervisor entitlement), mirroring ticket access rules.
+   * including restricted-sensitivity tickets (auditors may read them; they never change anything), mirroring ticket access rules.
    */
   @Get('events')
   async search(@Req() request: FastifyRequest, @Query() query: AuditSearchQuery) {
@@ -44,7 +44,7 @@ export class AuditController {
          AND ($5::text IS NULL OR e.actor_id = $5) AND ($6::text IS NULL OR e.action LIKE $6 ESCAPE '\\') AND ($7::text IS NULL OR e.outcome = $7)
          AND ($8::timestamptz IS NULL OR e.occurred_at >= $8) AND ($9::timestamptz IS NULL OR e.occurred_at < $9) AND ($10::bigint IS NULL OR e.sequence < $10)
        ORDER BY e.sequence DESC LIMIT $11`,
-      [user.legalEntity, user.country, user.queues, user.roles.includes('supervisor'), query.actor ?? null, query.action ? `${query.action.replace(/[\\%_]/g, '\\$&')}%` : null, query.outcome ?? null, query.from ?? null, query.to ?? null, query.before ?? null, limit, `${user.legalEntity}:${user.country}`]);
+      [user.legalEntity, user.country, user.queues, true, query.actor ?? null, query.action ? `${query.action.replace(/[\\%_]/g, '\\$&')}%` : null, query.outcome ?? null, query.from ?? null, query.to ?? null, query.before ?? null, limit, `${user.legalEntity}:${user.country}`]);
     await this.db.transaction((client) => this.audit.write(client, { actorId: user.subject, action: 'audit.searched', targetType: 'audit_chain', targetId: 'search', correlationId: request.correlationId!, outcome: 'success', metadata: { resultCount: rows.rows.length, filteredByActor: Boolean(query.actor), filteredByAction: Boolean(query.action) } }));
     const events = rows.rows.map((r) => ({ sequence: Number(r.sequence), id: r.id, occurredAt: r.occurred_at, actorId: r.actor_id, action: r.action, targetType: r.target_type, targetId: r.target_id, correlationId: r.correlation_id, outcome: r.outcome, metadata: r.metadata, eventHash: r.event_hash }));
     return { events, nextBefore: events.length === limit ? events[events.length - 1].sequence : null };

@@ -680,3 +680,90 @@ Added `docs/capacity.md` (load-test results and storage growth, measured with `l
 - The customer portal offers "Ask us to correct information we hold about me", shows the same acknowledgement and final-response dates, and the staff console shows the right outcome choices.
 
 **Test hygiene.** The older ticket suite now isolates itself from events other suites leave behind, so all seven suites pass together against shared live services (28 integration tests), alongside 33 unit tests and 5 browser tests.
+
+---
+
+## 26. Automatic resolution notice, and auditor access to restricted cases
+
+Two product decisions that the role review (`roles-and-access.md`) had flagged as open, now settled and built.
+
+**Automatic resolution notice.** Before, a customer learned a ticket was resolved only if a person remembered to request the message (or the customer checked the portal). Now resolving a ticket queues the notice itself.
+
+| Decision | What was built | Why |
+|---|---|---|
+| Where it runs | `ResolutionNoticeService.queue()` is called inside the same database transaction as the status change | A ticket can never be resolved without the notice being queued, or a recorded reason why not (atomic, same idea as the outbox) |
+| It is an ordinary governed communication | Reuses `ticket_communications`, templates, approvals and the delivery worker; no parallel path | One set of controls, one delivery/retry/receipt path, nothing new to audit separately |
+| Approval | Whatever the template says. `resolution_notice` (email) and the new `resolution_notice_portal` both require a supervisor; the request is made by `system:resolution-notice`, so any supervisor may approve (maker-checker still holds) | A complaint's final response is a regulated communication; an administrator can switch approval off per template |
+| Channel and recipient | Portal ticket → portal message; email ticket → the address the customer wrote from (kept on the acknowledgement, because the ticket's own sender reference is a one-way pseudonym); every other channel → the customer reference, resolved by the bank's CRM contact lookup | Reach the customer where they already are, without storing contact data we do not own |
+| Safety | Skipped (and audited) when customer communications are blocked on the case (tipping-off control), the ticket was de-identified, or a notice is already waiting. If no recipient or template exists, the assignee and supervisors are notified to contact the customer by hand | Nothing is sent that should not be, and nothing fails silently |
+| Control | `ticket_categories.resolution_notice_enabled` (default on), set through the category API (`resolutionNoticeEnabled`) | A bank can turn it off for categories where a person always writes the final response |
+
+**Limits.** The setting is available through the configuration API but has no checkbox in the administration screen yet. A ticket reopened and resolved again gets a new notice. Delivery to non-portal, non-email customers depends on the bank's contact lookup; without one, delivery records a clear `NO_CONTACT` failure rather than guessing.
+
+**Auditor access to restricted cases.** Auditors may now read restricted-sensitivity tickets, their attachments (after the malware scan) and their audit events, in their own entity, country and queues. The reasoning: an auditor's job is to check that sensitive cases were handled properly, so being blind to exactly those cases defeats the role. It stays safe because auditors still hold no write permission at all (proven by a unit test that an auditor is refused `ticket:update` on the same restricted ticket), every view is audited like any other, and scope is still enforced. Agents still cannot see restricted tickets. A bank that wants a narrower rule can change one line in `PolicyService`.
+
+**Verification.** Integration test: resolving a portal request queues exactly one pending notice, the customer sees nothing before approval, and sees the message after a supervisor approves and the delivery worker runs. Unit test for the auditor rule. All 19 database integration tests and 34 unit tests pass; lint and build are clean.
+
+**Interview summary.** "I made 'tell the customer it is resolved' a side effect of the resolution itself, inside the same transaction, so it cannot be forgotten and cannot half-happen. It reuses the existing governed-communication path, so approval, tipping-off blocks, delivery retries and audit all apply for free. Separately I widened auditors to restricted cases, because an auditor who cannot see the most sensitive cases cannot do the job, and I kept it safe by keeping them strictly read-only and fully audited."
+
+**Resume bullets.**
+- Made customer resolution notices automatic and transactional (queued in the same transaction as the status change), reusing the maker-checker communication pipeline with tipping-off blocks and per-category opt-out.
+- Redesigned auditor entitlements to cover restricted cases read-only, with unit-tested separation from write permissions and full audit of every access.
+
+---
+
+## 27. Customer documents in the portal
+
+A customer on the phone or in the portal often has to prove something (identity, address, a statement). Before, only staff could attach files, and the email channel dropped attachments. A portal customer can now add documents to their own request.
+
+| Decision | What was built | Why |
+|---|---|---|
+| Same pipeline as staff | `PortalAttachmentsService`: declare the file, get a one-time signed upload address, send the bytes **straight to object storage**, then confirm with a SHA-256 checksum and size. The existing ClamAV worker scans it; the existing download rule applies (no download until clean) | One set of controls for every file; the API never touches file bytes |
+| Ownership | The request must belong to the signed-in customer (same proof as reading or replying); anyone else gets 404. Closed, cancelled or de-identified requests refuse uploads | A customer can never add to, or learn about, someone else's case |
+| Limits | Types: PDF, JPEG, PNG, text. Size 10 MB (`PORTAL_MAX_ATTACHMENT_BYTES`), 10 documents per request, 20 uploads per hour | Tighter than staff because the door faces the public |
+| Staff reaction | Completing an upload adds an ordinary customer reply ("The customer attached a document: name") through `CustomerReplyService`, so the SLA clock resumes, a `pending_customer` ticket returns to in progress, and the assignee is notified, exactly as for a typed reply | No special cases: a document is just another way for the customer to answer |
+| What the customer sees | A list of their documents as *Being checked*, *Received* or *Not accepted*. Scan details are never described | Does not help an attacker probe the scanner |
+| Audit | Upload intent and completion are audited and published as the same events staff uploads use, marked `source: portal`, actor `customer:portal` | Same evidence trail |
+| Fails safe | Without object storage configured the portal says uploads are unavailable (503) and creates nothing | No local-disk fallback |
+
+**Browser plumbing.** The portal's content-security-policy needed the object store's address (`CSP_CONNECT_SRC`), and the object store must accept the portal's origin; both are deployment settings (the Helm chart's `cspConnectSrc` for the portal).
+
+**Limits.** Customers cannot download or delete a document after sending it. A caller with no portal account still cannot send a file directly; the natural next step is a secure upload link sent to them by SMS or email, reusing this same pipeline. Email attachments are still not imported.
+
+**Verification.** Integration test against the real object store and ClamAV: a stranger gets 404, a disallowed type 400, an oversized file 413; a clean file is *Being checked* and staff get 409 on download until scanned; after the scan the clean file is *Received* and downloadable, and the EICAR test virus is *Not accepted* and stays blocked. A Playwright test uploads a file from the portal in a real browser with an accessibility check. 34 unit tests, 19 database integration tests (plus the live-storage test) and 5 browser tests pass.
+
+**Interview summary.** "I opened the same upload pipeline to customers instead of building a second one: signed direct-to-storage upload, checksum, antivirus before release, and an audit trail. The customer-facing difference is tighter limits and an ownership check, and an upload counts as a customer reply so the SLA clock and the case team react as they do for any message."
+
+**Resume bullets.**
+- Added scanned customer document upload to the portal (signed direct-to-storage upload, checksum, ClamAV gating, size/type/count/rate limits), reusing the staff attachment pipeline end to end.
+- Verified with live-service integration tests (including the EICAR virus test) and a real-browser accessibility test.
+
+---
+
+## 28. Secure upload links for callers without a portal account
+
+A customer who phones the bank has no portal login, yet may need to send identity or address documents. Staff can now send them a secure link by email or SMS; opening it lets them send documents to that one request and nothing else.
+
+| Decision | What was built | Why |
+|---|---|---|
+| Staff do nothing new | A *document request* message template (email and SMS) whose body contains `{{uploadLink}}`. Queuing it from the ticket's existing Communications panel creates the link in the same transaction | The message reuses every control already built: template approval setting, the tipping-off block, masked recipients, delivery with retries and receipts, audit. No second sending path to secure |
+| The link is not stored | The token is `linkId.signature`, where the signature is an HMAC of the ID with a server secret (`UPLOAD_LINK_SECRET`). The table holds only the ID, ticket, expiry, file limit and revocation | A database leak does not reveal a single usable link; the delivery worker can rebuild the link from the ID when it sends the message |
+| Where the token travels | In the address after `#`, then in a request header (`X-Upload-Token`), never in a URL path or query | Browsers never send the part after `#` to servers, so it stays out of proxy and web-server logs |
+| What the link allows | Send documents to one ticket: the same signed direct-to-storage upload, checksum and malware scan as the portal and staff. It cannot read the ticket, its notes, or any document | Write-only; the least a document request needs |
+| When it works | Only while: genuine, not expired (72 h by default), not withdrawn, its message is approved and queued/sent/delivered, and the request is open and not de-identified. File count limited (5 by default) | A rejected or unapproved message never activates a link; closing a case ends it |
+| One answer for every failure | Forged, expired, withdrawn, unapproved or closed all return the same "not valid or has expired" | Nothing for an attacker to learn from the difference |
+| Withdrawal | `DELETE /v1/tickets/{id}/upload-links/{linkId}` by someone who can update the ticket; audited | For a message sent to the wrong person |
+| Shared code | The portal's document service was generalised into "who is uploading and under what authority" (`UploadAuthority`); portal customers and link holders then share the same limit, storage, scan and reply logic | Two doors, one set of rules |
+| Staff react as to any customer message | A completed upload adds a customer reply ("The customer attached a document: name"): SLA clock resumes, status returns from *waiting for customer*, the case team is notified | Consistent with portal uploads |
+
+**Operational.** Needs `UPLOAD_LINK_SECRET` (signing key; the start-up guard refuses the development value in production) and `PORTAL_PUBLIC_URL` (the portal's public address used in the link). Without both, a document request is refused. Two new events (`upload_link.created`, `upload_link.revoked`) are in the event catalogue.
+
+**Limits.** The link is a bearer credential: anyone who has the message can use it until it expires, so the default lifetime is short and the file count small; a bank should choose values with its fraud team. There is no staff screen listing or revoking links yet (the API exists). The link's lifetime starts when the message is created, not when it is approved.
+
+**Verification.** Unit tests for token forgery, editing, extension and secret rotation. Integration test against the real object store and virus scanner: a link cannot be sent through the portal channel; forged tokens all get 404; a real upload is *Being checked* then downloadable by staff only after the scan; the file limit is enforced; withdrawal kills the link. A Playwright test does the whole story in real browsers: a supervisor queues the request in the console, the email arrives in the test mail server, a separate browser with no session opens the link, uploads a file (with an accessibility check), and a damaged link shows only a plain refusal. 38 unit, 23 database integration (live storage) and 6 browser tests pass.
+
+**Interview summary.** "Callers have no account, so I issued a signed, expiring, single-ticket link instead. The signature is derived from the link ID with a server key, so nothing usable is stored. The link only lets you add documents to one case; every failure looks identical; and because staff send it through the normal governed-message path, approvals, tipping-off blocks, delivery and audit all apply without new code."
+
+**Resume bullets.**
+- Designed a stateless, HMAC-signed, expiring, single-purpose upload link for unauthenticated customers (token in the URL fragment and a header, uniform failure responses, per-link file limit, revocation).
+- Reused the governed communication pipeline and the scanned-upload pipeline end to end, verified in a live multi-browser, real-mail-server test.

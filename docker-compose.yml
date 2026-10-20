@@ -141,6 +141,8 @@ services:
       IMAP_USER: "cases"
       IMAP_PASSWORD: "cases-secret"
       EMAIL_REFERENCE_SECRET: "local-dev-only-email-pseudonym-key"
+      UPLOAD_LINK_SECRET: "local-dev-only-upload-link-signing-key"
+      PORTAL_PUBLIC_URL: "http://localhost:5174"
       KAFKA_BROKERS: "redpanda:29092"
       WORKFLOW_SCHEDULER_ENABLED: "true"
       WORKFLOW_TICK_MS: "30000"
@@ -183,7 +185,7 @@ services:
       API_URL: "http://localhost:3000/v1"
       OIDC_AUTHORITY: "http://localhost:8080/realms/bank-case-customers-dev"
       OIDC_CLIENT_ID: "bank-case-portal"
-      CSP_CONNECT_SRC: "'self' http://localhost:3000 http://localhost:8080"
+      CSP_CONNECT_SRC: "'self' http://localhost:3000 http://localhost:8080 http://localhost:8333"
     depends_on: [api]
 
 volumes:

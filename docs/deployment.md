@@ -104,3 +104,9 @@ This makes the audit trail append-only even against a compromised application. S
 | Mail server (SMTP 3025, IMAP 3143) | mailbox `cases` / `cases-secret` | `--profile mail` |
 
 Customer portal demo logins: `local-customer` and `local-customer-2` (password `local-dev-only-change-me`) in the separate customer realm.
+
+## Customer document uploads
+
+The portal sends documents straight from the customer's browser to object storage using a short-lived signed address. Two settings must therefore allow it: the portal's `CSP_CONNECT_SRC` (Helm `portal.cspConnectSrc`) must include the object store's public address, and the object store's CORS rules must accept the portal's origin for `PUT`. Limits are `PORTAL_MAX_ATTACHMENT_BYTES` (default 10 MB), `PORTAL_MAX_ATTACHMENTS_PER_REQUEST` (10) and `PORTAL_MAX_UPLOADS_PER_HOUR` (20). Without object storage the portal reports that sending documents is unavailable.
+
+Secure upload links (document requests sent to callers without a portal account) need `UPLOAD_LINK_SECRET` (a long random signing key, kept in the secret store; the start-up guard rejects the development value) and `PORTAL_PUBLIC_URL` (the portal's public address; Helm `config.portal.publicUrl`). Lifetime and file count are `UPLOAD_LINK_TTL_HOURS` (72) and `UPLOAD_LINK_MAX_FILES` (5). The portal's `/upload` path must be served by the same single-page app (the chart's ingress does this).

@@ -22,17 +22,17 @@ so all events for one ticket stay in order on one partition.
 
 Headers: `event-id`, `event-type`, `correlation-id`. Events are **notifications**: they contain opaque IDs and classifications, never customer content, free text or contact details. To learn more, call the API (the consumer needs its own authorization). Ordering is guaranteed per aggregate only on the happy path; a retried event can arrive after a later one, so compare `occurredAt` or re-read current state.
 
-## Events (40)
+## Events (42)
 
 | Event type | Aggregate (topic suffix) | Payload fields | Raised in |
 |---|---|---|---|
 | `approval.approved` | approval | `approvalId`, `ticketId`, `decision` | src/tickets/tickets.service.ts |
 | `approval.rejected` | approval | `approvalId`, `ticketId`, `decision` | src/tickets/tickets.service.ts |
-| `approval.requested` | approval | `approvalId`, `ticketId`, `communicationId`, `actionType` | src/tickets/tickets.service.ts |
+| `approval.requested` | approval | `approvalId`, `ticketId`, `communicationId`, `actionType` | src/tickets/resolution-notice.service.ts, src/tickets/tickets.service.ts |
 | `attachment.download_requested` | attachment | `attachmentId`, `ticketId` | src/tickets/tickets.service.ts |
 | `attachment.scan_completed` | attachment | `attachmentId`, `ticketId`, `malwareStatus` | src/tickets/tickets.service.ts |
-| `attachment.upload_completed` | attachment | `attachmentId`, `ticketId`, `malwareStatus` | src/tickets/tickets.service.ts |
-| `attachment.upload_intent_created` | attachment | `attachmentId`, `ticketId`, `contentType`, `sizeBytes`, `classification` | src/tickets/tickets.service.ts |
+| `attachment.upload_completed` | attachment | `attachmentId`, `ticketId`, `malwareStatus` | src/portal/portal-attachments.service.ts, src/tickets/tickets.service.ts |
+| `attachment.upload_intent_created` | attachment | `attachmentId`, `ticketId`, `contentType`, `sizeBytes`, `classification` | src/portal/portal-attachments.service.ts, src/tickets/tickets.service.ts |
 | `audit.anchor_created` | audit_chain | `sequence`, `headHash` | src/audit/audit-integrity.service.ts |
 | `audit.event` | audit | `eventId`, `occurredAt`, `actorId`, `action`, `targetType`, `targetId`, `outcome`, `eventHash`, `previousHash`, `hashVersion` | src/audit/audit.service.ts |
 | `configuration.assignment_rule_changed` | assignment_rule | `ruleKey`, `queue`, `category`, `priority`, `strategy`, `sortOrder`, `active`, `previous` | src/configuration/routing.service.ts |
@@ -66,6 +66,8 @@ Headers: `event-id`, `event-type`, `correlation-id`. Events are **notifications*
 | `ticket.sla_status_changed` | ticket | `ticketId`, `slaStatus` | src/tickets/sla.service.ts |
 | `ticket.status_changed` | ticket | `ticketId`, `fromStatus`, `toStatus` | src/tickets/tickets.service.ts |
 | `ticket.updated` | ticket | `ticketId`, `priority` | src/tickets/tickets.service.ts |
+| `upload_link.created` | upload_link | `linkId`, `ticketId`, `communicationId` | src/tickets/upload-link.service.ts |
+| `upload_link.revoked` | upload_link | `linkId`, `ticketId` | src/tickets/upload-link.service.ts |
 
 ## Audit events (optional stream)
 

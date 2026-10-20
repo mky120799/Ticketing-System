@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { User } from 'oidc-client-ts';
 import { completeSignIn, signIn, signOut, userManager } from './auth';
-import { createRequest, getRequest, listRequests, sendMessage, type RequestDetail, type RequestSummary } from './api';
+import { createRequest, DOCUMENT_TYPES, getRequest, listRequests, MAX_DOCUMENT_BYTES, sendDocument, sendMessage, type RequestDetail, type RequestSummary } from './api';
 
 const when = (value: string) => new Date(value).toLocaleString();
 
@@ -10,6 +10,7 @@ export function App(): JSX.Element {
   const [requests, setRequests] = useState<RequestSummary[]>([]); const [selected, setSelected] = useState<RequestDetail | null>(null);
   const [message, setMessage] = useState(''); const [notice, setNotice] = useState(''); const [error, setError] = useState('');
   const [kind, setKind] = useState<'request' | 'complaint' | 'correction'>('request'); const [subject, setSubject] = useState(''); const [description, setDescription] = useState('');
+  const [sending, setSending] = useState(false); const fileInput = useRef<HTMLInputElement>(null);
   const submissionKey = useRef(crypto.randomUUID()); const heading = useRef<HTMLHeadingElement>(null);
   const fail = (e: unknown) => { setNotice(''); setError(e instanceof Error ? e.message : 'Something went wrong.'); };
 
@@ -25,6 +26,14 @@ export function App(): JSX.Element {
     catch (e) { fail(e); }
   };
   const reply = async (event: FormEvent) => { event.preventDefault(); if (!user || !selected || !message.trim()) return; try { await sendMessage(user, selected.id, message.trim()); setMessage(''); setNotice('Your message has been sent.'); await open(selected.id); } catch (e) { fail(e); } };
+
+  const attach = async (event: FormEvent) => {
+    event.preventDefault(); const file = fileInput.current?.files?.[0]; if (!user || !selected || !file) return;
+    if (!DOCUMENT_TYPES.includes(file.type)) { fail(new Error('Please choose a PDF, a JPEG or PNG picture, or a text file.')); return; }
+    if (file.size > MAX_DOCUMENT_BYTES) { fail(new Error(`Files can be up to ${MAX_DOCUMENT_BYTES / 1024 / 1024} MB.`)); return; }
+    setSending(true); setError('');
+    try { await sendDocument(user, selected.id, file); if (fileInput.current) fileInput.current.value = ''; setNotice('Your document has been sent. We check every document before our staff can open it.'); await open(selected.id); } catch (e) { fail(e); } finally { setSending(false); }
+  };
 
   if (!ready) return <main><p role="status">Loading…</p></main>;
   if (!user) return <main className="narrow"><h1>Make a request or complaint</h1><p>Sign in to raise a request or complaint with us and to follow its progress.</p>{error && <p className="error" role="alert">{error}</p>}<button onClick={() => void signIn()}>Sign in</button></main>;
@@ -56,6 +65,9 @@ export function App(): JSX.Element {
         <h3>Updates</h3>
         {selected.updates.length ? <ol className="updates">{selected.updates.map((u, index) => <li key={index} className={u.from}><strong>{u.from === 'you' ? 'You' : 'The bank'}{u.title ? ` — ${u.title}` : ''}</strong><p className="pre">{u.text}</p><small>{when(u.at)}</small></li>)}</ol> : <p>No updates yet. We will let you know here.</p>}
         <form onSubmit={(event) => void reply(event)}><label>Add a message<textarea required maxLength={5000} rows={4} value={message} onChange={(event) => setMessage(event.target.value)} /></label><button type="submit">Send message</button></form>
+        <h3>Documents you have sent</h3>
+        {selected.attachments.length ? <ul className="documents">{selected.attachments.map((d) => <li key={d.id}><strong>{d.filename}</strong> — {d.status === 'received' ? 'Received' : d.status === 'being_checked' ? 'Being checked' : 'Not accepted. Please send a different file or contact us.'}</li>)}</ul> : <p>You have not sent any documents.</p>}
+        <form onSubmit={(event) => void attach(event)}><label>Add a document<input ref={fileInput} type="file" required accept=".pdf,.jpg,.jpeg,.png,.txt,application/pdf,image/jpeg,image/png,text/plain" aria-describedby="doc-hint" /></label><p id="doc-hint" className="hint">PDF, JPEG, PNG or text files up to {MAX_DOCUMENT_BYTES / 1024 / 1024} MB. Please cover or leave out full card numbers and PINs.</p><button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send document'}</button></form>
       </> : <><h2 id="detail-heading">Details</h2><p>Choose a request from your history to see its progress.</p></>}</section>
     </div>
   </main>;

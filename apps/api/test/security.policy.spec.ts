@@ -13,6 +13,13 @@ describe('ticket authorization policy', () => {
   it('denies restricted tickets to agents without a sensitivity entitlement', () => {
     expect(() => policy.assertTicketAccess(caseAgent, { ...ticket, sensitivity: 'restricted' }, 'ticket:read')).toThrow(ForbiddenException);
   });
+  it('lets an auditor read a restricted ticket but never change it', () => {
+    const auditor: UserContext = { ...caseAgent, subject: 'auditor-1', roles: ['auditor'] };
+    const restricted = { ...ticket, sensitivity: 'restricted' };
+    expect(() => policy.assertTicketAccess(auditor, restricted, 'ticket:read')).not.toThrow();
+    expect(() => policy.assertTicketAccess(auditor, restricted, 'ticket:update')).toThrow(ForbiddenException);
+    expect(() => policy.assertTicketAccess(auditor, { ...restricted, queue: 'fraud' }, 'ticket:read')).toThrow(ForbiddenException);
+  });
   it('does not grant business permissions to administrators by default', () => {
     expect(() => policy.assertPermission({ ...caseAgent, roles: ['administrator'] }, 'ticket:read')).toThrow(ForbiddenException);
   });

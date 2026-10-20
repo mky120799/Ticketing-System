@@ -14,6 +14,7 @@ Plain-language summary of what is built and what is not. "Done" means built and 
 | Internal and customer notes; workflow-driven status changes; resolve needs a root cause | Done |
 | Linked tickets; attachments with direct upload, checksum, ClamAV scanning (EICAR blocked) and gated download | Done |
 | Customer communications from approved templates (editable wording), second-person approval, delivery by email and SMS gateway | Done (real SMS gateway and CRM lookup are the bank's) |
+| Resolution notice queued automatically when a ticket is resolved (supervisor approval, blocked cases skipped, switchable per category) | Done |
 | Staff notification inbox with live push (assignment, approvals, deadlines, escalation, customer replies) | Done |
 | Safe re-submission (idempotent creation and intake) | Done |
 
@@ -23,6 +24,8 @@ Plain-language summary of what is built and what is not. "Done" means built and 
 | Staff (branch, call centre, internal) | Done |
 | Email: real mailbox reader, reply threading, auto-reply and loop protection, acknowledgement | Done (verified against a real mail server) |
 | Customer portal with its own login: raise a request, complaint or correction request; follow progress; reply | Done |
+| Customer documents in the portal (scanned before staff can open them) | Done |
+| Secure upload link sent by email or SMS to a caller with no account (expiring, one request, scanned) | Done |
 | Mobile app, phone/CTI | Not built (the same intake endpoint is ready for them) |
 
 ### Automation and workflow
@@ -49,7 +52,7 @@ Plain-language summary of what is built and what is not. "Done" means built and 
 | Append-only, hash-chained audit with timestamps in the hash, request context and before/after values | Done |
 | Hourly and daily verification, signed external anchors, SIEM streaming, verified archival | Done |
 | Application database account physically unable to alter the audit trail (proven by test) | Done |
-| Auditor search and integrity console | Done |
+| Auditor search and integrity console; auditors can read restricted cases (read-only, audited) | Done |
 | Pinned token algorithms, client allow-list, revocation by introspection, step-up, central entitlements, silent renewal | Done |
 | Start-up guard refusing production with development settings | Done |
 | Security headers, rate limiting, body limits, bounded database pool and timeouts | Done |
@@ -76,7 +79,7 @@ Plain-language summary of what is built and what is not. "Done" means built and 
 
 ### Known gaps in what was built
 - Skills, shift and absence-aware assignment; workflow guards beyond roles (for example approval before resolve)
-- Customer attachments in the portal; mobile app; phone integration
+- Staff screen to list or withdraw upload links (the API exists); mobile app; phone integration
 - Template versioning and localisation; a graphical workflow editor (it is a JSON editor)
 - Rate limiting is per server instance (the bank's gateway should also limit)
 - Events written before audit version 2 are link-checked only; staff-typed reasons in audit metadata cannot be removed later

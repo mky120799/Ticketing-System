@@ -39,6 +39,6 @@ export function AuditConsole({ user, onError }: { user: User; onError: (message:
         <button type="submit">Search</button></form>
       {searched && (events.length ? <table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th></tr></thead><tbody>{events.map((event) => <tr key={event.id}><td>{new Date(event.occurredAt).toLocaleString()}</td><td>{event.actorId}</td><td>{event.action}</td><td>{event.targetType} {event.targetId.slice(0, 8)}</td><td className={event.outcome === 'denied' ? 'bad' : ''}>{event.outcome}</td></tr>)}</tbody></table> : <p>No matching events.</p>)}
       {next !== null && <button className="secondary" onClick={() => void run(next)}>Load more</button>}
-      <p className="notice">Search covers events about tickets in your entity, country and queues. Restricted-sensitivity tickets need supervisor entitlement and are excluded. Every search is itself audited.</p></section>
+      <p className="notice">Search covers events about tickets in your entity, country and queues. Restricted-sensitivity tickets are included: auditors can read them but never change anything. Every search is itself audited.</p></section>
   </div>;
 }

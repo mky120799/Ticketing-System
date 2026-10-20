@@ -26,7 +26,8 @@ export class PolicyService {
     const branchAllowed = user.branch === ticket.branch_code;
     const ownsCase = ticket.created_by === user.subject || ticket.assigned_to === user.subject;
     const scopeAllowed = user.roles.includes('auditor') || user.roles.includes('supervisor') ? queueAllowed : queueAllowed && (branchAllowed || ownsCase);
-    const sensitivityAllowed = ticket.sensitivity !== 'restricted' || user.roles.includes('supervisor');
+    // Restricted cases are for the people who decide on them (supervisors) and the people who must be able to check that they were handled properly (auditors, who can read but never change anything).
+    const sensitivityAllowed = ticket.sensitivity !== 'restricted' || user.roles.includes('supervisor') || user.roles.includes('auditor');
     if (!sameEntity || !scopeAllowed || !sensitivityAllowed) throw new ForbiddenException('Ticket access denied by policy');
   }
 }

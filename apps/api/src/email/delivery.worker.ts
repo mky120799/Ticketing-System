@@ -6,6 +6,7 @@ import { PgService } from '../database/pg.service.js';
 import { IntegrationService } from '../integrations/integration.service.js';
 import { CONTACT_RESOLVER, type ContactResolver } from './contact-resolver.js';
 import { renderMessage } from './message-template.js';
+import { uploadLinksConfigured, uploadLinkUrl } from '../tickets/upload-link-token.js';
 
 const PROVIDER: UserContext = { subject: 'system:email-delivery', roles: ['notification-provider'], branch: '', queues: [], department: '', legalEntity: '', country: '', serviceIdentity: true };
 const MAX_ATTEMPTS = 5;
@@ -60,7 +61,13 @@ export class DeliveryWorker implements OnModuleInit, OnModuleDestroy {
       if (c.communications_blocked) return await this.fail(c.id, 'COMMUNICATION_BLOCKED', 'Customer communications are blocked on this case');
       const ticket = (await this.db.query<{ status: string }>('SELECT status FROM tickets WHERE id=$1', [c.ticket_id])).rows[0];
       if (!ticket || !c.subject_template || !c.body_template) return await this.fail(c.id, 'TEMPLATE_INCOMPLETE', 'Template has no subject or body');
-      const message = renderMessage(c.subject_template, c.body_template, c.ticket_id, ticket.status);
+      const extra: Record<string, string> = {};
+      if (c.body_template.includes('{{uploadLink}}')) {
+        const link = uploadLinksConfigured() ? (await this.db.query<{ id: string }>('SELECT id FROM upload_links WHERE communication_id=$1 AND revoked_at IS NULL AND expires_at > now()', [c.id])).rows[0] : undefined;
+        if (!link) return await this.fail(c.id, 'LINK_UNAVAILABLE', 'The secure upload link is missing, withdrawn or expired');
+        extra.uploadLink = uploadLinkUrl(link.id);
+      }
+      const message = renderMessage(c.subject_template, c.body_template, c.ticket_id, ticket.status, extra);
       if (c.channel === 'portal') {
         await this.record(c.id, 'portal', `portal-${c.id}`, 'sent');
         await this.record(c.id, 'portal', `portal-${c.id}-visible`, 'delivered');

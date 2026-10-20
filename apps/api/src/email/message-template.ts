@@ -15,8 +15,8 @@ export function friendlyStatus(status: string): string {
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 /** Only these placeholders exist, so a template can never pull in anything else from the case. */
-export function renderMessage(subjectTemplate: string, bodyTemplate: string, ticketId: string, status: string): { subject: string; text: string; html: string } {
-  const vars: Record<string, string> = { ticketRef: ticketReference(ticketId), status: friendlyStatus(status) };
+export function renderMessage(subjectTemplate: string, bodyTemplate: string, ticketId: string, status: string, extra: Record<string, string> = {}): { subject: string; text: string; html: string } {
+  const vars: Record<string, string> = { ticketRef: ticketReference(ticketId), status: friendlyStatus(status), ...extra };
   const fill = (template: string) => template.replace(/\{\{(\w+)\}\}/g, (_, name: string) => vars[name] ?? '');
   const text = fill(bodyTemplate);
   return { subject: fill(subjectTemplate).replace(/[\r\n]+/g, ' ').slice(0, 200), text, html: `<p>${escapeHtml(text).replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>')}</p>` };

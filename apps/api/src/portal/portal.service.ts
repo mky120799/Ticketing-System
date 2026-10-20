@@ -6,6 +6,7 @@ import { friendlyStatus, renderMessage, ticketReference } from '../email/message
 import { CustomerReplyService } from '../intake/customer-reply.service.js';
 import { IntakeService } from '../intake/intake.service.js';
 import type { CreatePortalRequestDto } from './portal.dto.js';
+import { customerAttachmentStatus } from './customer-attachment-status.js';
 
 const ADAPTER: UserContext = { subject: 'system:portal', roles: ['intake-gateway'], branch: '', queues: [], department: '', legalEntity: '', country: '', serviceIdentity: true };
 const MAX_REQUESTS_PER_HOUR = () => Number(process.env.PORTAL_MAX_REQUESTS_PER_HOUR ?? 10);
@@ -50,7 +51,9 @@ export class PortalService {
       ...notes.rows.map((n) => ({ from: n.author_id.startsWith('customer:') ? 'you' : 'bank', text: n.body, at: n.created_at })),
       ...messages.rows.map((m) => { const rendered = renderMessage(m.subject_template, m.body_template, ticketId, t.status); return { from: 'bank', title: rendered.subject, text: rendered.text, at: m.created_at }; })
     ].sort((a, b) => a.at.getTime() - b.at.getTime());
-    return { ...this.summary(t), description: t.description, updates };
+    const files = await this.db.query<{ id: string; original_filename: string; malware_status: string; created_at: Date }>("SELECT id,original_filename,malware_status,created_at FROM attachments WHERE ticket_id=$1 AND uploaded_by LIKE 'customer:%' AND upload_status='uploaded' ORDER BY created_at", [ticketId]);
+    const attachments = files.rows.map((f) => ({ id: f.id, filename: f.original_filename, status: customerAttachmentStatus(f.malware_status), at: f.created_at }));
+    return { ...this.summary(t), description: t.description, updates, attachments };
   }
 
   async reply(subject: string, ticketId: string, body: string): Promise<void> {

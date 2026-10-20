@@ -23,5 +23,12 @@ test('a customer signs in, raises a complaint, follows it and replies', async ({
   await page.getByRole('button', { name: 'Send message' }).click();
   await expect(page.getByText('Your message has been sent.')).toBeVisible();
   await expect(page.locator('.updates li.you').first()).toContainText('Here is some extra detail.');
+
+  await page.getByLabel('Add a document').setInputFiles({ name: 'proof-of-address.txt', mimeType: 'text/plain', buffer: Buffer.from('A browser test document.') });
+  await page.getByRole('button', { name: 'Send document' }).click();
+  await expect(page.getByText(/Your document has been sent/)).toBeVisible();
+  await expect(page.locator('.documents li').first()).toContainText('proof-of-address.txt');
+  await expect(page.locator('.documents li').first()).toContainText(/Being checked|Received/);
+  await expectAccessible(page, 'portal request detail with a document');
   await page.getByRole('button', { name: 'Sign out' }).click();
 });

@@ -33,7 +33,7 @@ oidcPortal:
 # Secrets are NEVER created from values by this chart. Create a Secret (Vault/External Secrets/Sealed Secrets) with
 # these keys and name it here:
 #   DATABASE_URL (required), REDIS_URL, METRICS_TOKEN, OBJECT_STORAGE_ACCESS_KEY_ID, OBJECT_STORAGE_SECRET_ACCESS_KEY,
-#   SMTP_USER, SMTP_PASSWORD, IMAP_USER, IMAP_PASSWORD, EMAIL_REFERENCE_SECRET, CRM_CONTACT_TOKEN, SMS_GATEWAY_TOKEN,
+#   SMTP_USER, SMTP_PASSWORD, IMAP_USER, IMAP_PASSWORD, EMAIL_REFERENCE_SECRET, UPLOAD_LINK_SECRET, CRM_CONTACT_TOKEN, SMS_GATEWAY_TOKEN,
 #   MIGRATION_DATABASE_URL (schema owner, used only by the migration job), AUTH_INTROSPECTION_CLIENT_ID, AUTH_INTROSPECTION_CLIENT_SECRET,
 #   ENTITLEMENT_TOKEN, AUDIT_ANCHOR_SIGNING_PRIVATE_KEY
 existingSecret: bank-case-secrets
@@ -51,7 +51,7 @@ config:
   clamav: { host: "", port: 3310 }                  # empty disables the attachment scan worker
   email: { smtpHost: "", smtpPort: 587, smtpSecure: false, mailFrom: "", imapHost: "", imapPort: 993, imapSecure: true, autoAcknowledge: true, maxTicketsPerSenderPerHour: 5 }
   contacts: { crmContactUrl: "", smsGatewayUrl: "" } # bank-controlled lookups; the platform keeps no customer contact data
-  portal: { maxRequestsPerHour: 10, maxMessagesPerHour: 30 }
+  portal: { maxRequestsPerHour: 10, maxMessagesPerHour: 30, publicUrl: "", uploadLinkTtlHours: 72, uploadLinkMaxFiles: 5 } # publicUrl: the customer portal address used in secure upload links (empty disables them)
   auth:
     allowedClients: ""                 # comma-separated client IDs allowed to call the API (azp); set in production
     introspectionUrl: ""               # IdP token introspection endpoint; makes revocation effective within the cache window

@@ -19,7 +19,7 @@ Last updated 2026-10-03. Progress is marked inline with ✅. Companion documents
 
 ## 0. Where things stand
 
-Progress is marked inline with ✅. Of the 82 required (MUST) and recommended (SHOULD) items below, **40 are done**. The **27 MUST items still open** depend on the bank's environment, people or an external assessor (identity provider, production infrastructure, storage and encryption, integrations, compliance review, penetration test, accessibility audit, user acceptance testing, disaster-recovery exercise); only 1 of them is engineering work that waits on a code host (running the security workflows in the real repository). Of the 15 SHOULD items still open, 5 are engineering items: skills and shift-aware assignment, richer workflow guards, customer attachments in the portal, a zero-downtime upgrade rehearsal and a wider automated test suite.
+Progress is marked inline with ✅. Of the 82 required (MUST) and recommended (SHOULD) items below, **41 are done**. The **27 MUST items still open** depend on the bank's environment, people or an external assessor (identity provider, production infrastructure, storage and encryption, integrations, compliance review, penetration test, accessibility audit, user acceptance testing, disaster-recovery exercise); only 1 of them is engineering work that waits on a code host (running the security workflows in the real repository). Of the 15 SHOULD items still open, 5 are engineering items: skills and shift-aware assignment, richer workflow guards, customer attachments in the portal, a zero-downtime upgrade rehearsal and a wider automated test suite.
 
 Verified: 33 unit tests, 28 integration tests across 7 suites against live PostgreSQL, Keycloak, Kafka-compatible broker, object storage, ClamAV and a mail server, and 5 browser tests (with accessibility checks) against the containerised stack.
 
@@ -34,7 +34,7 @@ Verified: 33 unit tests, 28 integration tests across 7 suites against live Postg
 | Australian compliance | Good | Specialist review, correction workflow (APP 13) |
 | Authentication | Hardened (pinned algorithms, client allow-list, revocation, step-up, entitlements, silent renewal) | Real enterprise IdP untested; MFA and session policy at the IdP |
 | Notifications | Delivery and staff inbox built | Real CRM lookup and SMS gateway (bank); editor UI |
-| Intake channels and customer portal | Real email intake and customer portal built | Customer attachments; bank login integration |
+| Intake channels and customer portal | Real email intake and customer portal built | Bank login integration |
 | Integrations and events | Kafka verified against a broker | Source-system adapters, schema registry |
 | Attachments | Verified end to end | Production store/scanner config |
 | Reporting and analytics | Operational reporting | Trends, scheduled exports, BI feed |
@@ -149,7 +149,7 @@ Verified: 33 unit tests, 28 integration tests across 7 suites against live Postg
 | ✅ DONE — Real email intake: mailbox reader, sender-verified reply threading, auto-reply and loop protection, per-sender limits, pseudonymous senders (verified against a real mail server); needs the bank's mailbox | MUST for email | Us + Bank mailbox |
 | ✅ DONE — Customer portal with its own login (separate realm/audience): raise a request or complaint, see own requests, read customer-visible updates, reply (verified; accessibility audit still to do) | MUST for self-service | Us + Bank |
 | Plug the portal into the bank's online-banking login instead of a separate account | SHOULD | Bank |
-| Customer attachments, with scanning | SHOULD | Us |
+| ✅ DONE — Customer attachments, with scanning (portal: signed upload, checksum, malware scan, size/type/count limits; callers without a portal account would need a secure-link flow) | SHOULD | Us |
 | Mobile app, using the same customer API | OPTIONAL | Bank |
 | Phone/CTI integration (screen-pop, call ID on the ticket) | OPTIONAL | Bank |
 | Identity verification of the customer | Bank process | Bank |

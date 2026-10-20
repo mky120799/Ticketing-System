@@ -14,6 +14,8 @@ export class UpsertCategoryDto {
   @IsOptional() @IsString() @Length(2, 60) regulatoryProfile?: string;
   /** Block customer communications by default (e.g. fraud / suspicious-matter investigations). */
   @IsOptional() @IsBoolean() blockCustomerCommunication?: boolean;
+  /** Queue a resolution notice for the customer when a ticket in this category is resolved (default true). */
+  @IsOptional() @IsBoolean() resolutionNoticeEnabled?: boolean;
   /** Lifecycle used by tickets in this category (defaults to the standard workflow). */
   @IsOptional() @IsString() @Length(2, 60) workflowKey?: string;
   /** How long closed tickets in this category are kept before de-identification (default 7). */

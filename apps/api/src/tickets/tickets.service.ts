@@ -13,6 +13,8 @@ import { COMPLAINT_OUTCOMES, PRIVACY_OUTCOMES } from '../compliance/compliance.d
 import { WorkflowDefinitionService } from '../workflow/workflow-definition.service.js';
 import { ComplianceService } from '../compliance/compliance.service.js';
 import { AssignmentService } from './assignment.service.js';
+import { ResolutionNoticeService, type NoticeTicket } from './resolution-notice.service.js';
+import { UploadLinkService } from './upload-link.service.js';
 import { LiveEventsService } from '../live/live-events.service.js';
 import { AttachmentStorageService } from '../storage/attachment-storage.service.js';
 import type { AddNoteDto, ApprovalDecisionDto, ApprovalRequestDto, AssignTicketDto, AttachmentScanResultDto, CompleteAttachmentDto, CreateAttachmentDto, CreateCommunicationDto, CreateTicketDto, LinkTicketDto, SearchTicketsQuery, TransitionTicketDto, UpdateRetentionControlDto, UpdateTicketDto, TicketStatus } from './ticket.dto.js';
@@ -24,7 +26,7 @@ type AttachmentRow = { id: string; object_key: string; original_filename: string
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly db: PgService, private readonly policy: PolicyService, private readonly audit: AuditService, private readonly sla: SlaService, private readonly outbox: OutboxService, private readonly configuration: CaseConfigurationService, private readonly storage: AttachmentStorageService, private readonly live: LiveEventsService, private readonly assignment: AssignmentService, private readonly compliance: ComplianceService, private readonly workflows: WorkflowDefinitionService, private readonly notifications: NotificationsService) {}
+  constructor(private readonly db: PgService, private readonly policy: PolicyService, private readonly audit: AuditService, private readonly sla: SlaService, private readonly outbox: OutboxService, private readonly configuration: CaseConfigurationService, private readonly storage: AttachmentStorageService, private readonly live: LiveEventsService, private readonly assignment: AssignmentService, private readonly compliance: ComplianceService, private readonly workflows: WorkflowDefinitionService, private readonly notifications: NotificationsService, private readonly resolutionNotice: ResolutionNoticeService, private readonly uploadLinks: UploadLinkService) {}
 
   async create(user: UserContext, dto: CreateTicketDto, idempotencyKey: string, correlationId: string): Promise<unknown> {
     this.policy.assertPermission(user, 'ticket:create');
@@ -188,6 +190,7 @@ export class TicketsService {
       await this.audit.write(client, { actorId: user.subject, action: 'ticket.status_changed', targetType: 'ticket', targetId: ticketId, correlationId, outcome: 'success', metadata: { fromStatus: ticket.status, toStatus: dto.toStatus, ...(dto.rootCause ? { rootCause: dto.rootCause } : {}), ...(dto.idrOutcome ? { idrOutcome: dto.idrOutcome } : {}) } });
       await this.outbox.enqueue(client, { eventType: 'ticket.status_changed', aggregateType: 'ticket', aggregateId: ticketId, correlationId, payload: { ticketId, fromStatus: ticket.status, toStatus: dto.toStatus } });
       await this.live.notify(client, 'ticket.status_changed', updated.rows[0]);
+      if (dto.toStatus === 'resolved') await this.resolutionNotice.queue(client, updated.rows[0] as unknown as NoticeTicket, correlationId);
       return this.publicTicket(updated.rows[0]);
     });
   }
@@ -269,8 +272,11 @@ export class TicketsService {
       const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:update');
       if (ticket.redacted_at) throw new ConflictException('This ticket has been de-identified and can no longer be changed');
       if (ticket.communications_blocked) throw new ConflictException('Customer communications are blocked on this case');
-      const template = await client.query<{ template_key: string; channel: string; requires_approval: boolean }>('SELECT template_key,channel,requires_approval FROM communication_templates WHERE template_key=$1 AND channel=$2 AND active=true', [dto.templateKey, dto.channel]);
+      const template = await client.query<{ template_key: string; channel: string; requires_approval: boolean; body_template: string | null }>('SELECT template_key,channel,requires_approval,body_template FROM communication_templates WHERE template_key=$1 AND channel=$2 AND active=true', [dto.templateKey, dto.channel]);
       if (!template.rows[0]) throw new ConflictException('Communication template is not active for this channel');
+      // A document request carries a secure upload link; it is created with the message and only works once the message is approved and queued.
+      const carriesUploadLink = (template.rows[0].body_template ?? '').includes('{{uploadLink}}');
+      if (carriesUploadLink) { if (dto.channel === 'portal') throw new ConflictException('Upload links cannot be sent through the portal; portal customers can add documents themselves'); this.uploadLinks.assertConfigured(); }
       // A portal message goes to the customer who raised the request, so the recipient is taken from the ticket, never typed in.
       let recipientReference = dto.recipientReference;
       if (dto.channel === 'portal') {
@@ -283,6 +289,7 @@ export class TicketsService {
       const eventType = status === 'queued' ? 'customer_communication.queued' : 'customer_communication.pending_approval';
       const auditAction = status === 'queued' ? 'customer_communication.queued' : 'customer_communication.approval_requested';
       await client.query('INSERT INTO ticket_communications (id,ticket_id,channel,template_key,recipient_reference,recipient_masked,created_by,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [id, ticketId, dto.channel, dto.templateKey, recipientReference, this.mask(recipientReference), user.subject, status]);
+      if (carriesUploadLink) await this.uploadLinks.issue(client, ticketId, id, user.subject, correlationId);
       if (status === 'queued') await client.query('UPDATE tickets SET first_responded_at=COALESCE(first_responded_at, now()) WHERE id=$1', [ticketId]);
       await this.audit.write(client, { actorId: user.subject, action: auditAction, targetType: 'communication', targetId: id, correlationId, outcome: 'success', metadata: { ticketId, channel: dto.channel, templateKey: dto.templateKey, status } });
       let approvalId: string | undefined;
@@ -296,6 +303,14 @@ export class TicketsService {
       }
       await this.outbox.enqueue(client, { eventType, aggregateType: 'communication', aggregateId: id, correlationId, payload: { communicationId: id, ticketId, channel: dto.channel, templateKey: dto.templateKey, status } });
       return { id, channel: dto.channel, templateKey: dto.templateKey, recipientMasked: this.mask(recipientReference), status, ...(approvalId ? { approvalId } : {}) };
+    });
+  }
+
+  async revokeUploadLink(user: UserContext, ticketId: string, linkId: string, correlationId: string): Promise<{ revoked: true }> {
+    return this.db.transaction(async (client) => {
+      const ticket = await this.ticket(client, ticketId); this.policy.assertTicketAccess(user, ticket, 'ticket:update');
+      await this.uploadLinks.revoke(client, ticketId, linkId, user.subject, correlationId);
+      return { revoked: true as const };
     });
   }
 

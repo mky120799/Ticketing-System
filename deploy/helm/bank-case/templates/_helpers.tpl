@@ -67,6 +67,9 @@ securityContext:
 - { name: PORTAL_OIDC_JWKS_URI, value: {{ .Values.oidcPortal.jwksUri | quote }} }
 - { name: PORTAL_MAX_REQUESTS_PER_HOUR, value: {{ .Values.config.portal.maxRequestsPerHour | quote }} }
 - { name: PORTAL_MAX_MESSAGES_PER_HOUR, value: {{ .Values.config.portal.maxMessagesPerHour | quote }} }
+- { name: PORTAL_PUBLIC_URL, value: {{ .Values.config.portal.publicUrl | quote }} }
+- { name: UPLOAD_LINK_TTL_HOURS, value: {{ .Values.config.portal.uploadLinkTtlHours | quote }} }
+- { name: UPLOAD_LINK_MAX_FILES, value: {{ .Values.config.portal.uploadLinkMaxFiles | quote }} }
 - { name: AUTH_ALLOWED_CLIENTS, value: {{ .Values.config.auth.allowedClients | quote }} }
 - { name: AUTH_INTROSPECTION_URL, value: {{ .Values.config.auth.introspectionUrl | quote }} }
 - { name: AUTH_INTROSPECTION_CACHE_SECONDS, value: {{ .Values.config.auth.introspectionCacheSeconds | quote }} }
@@ -86,7 +89,7 @@ securityContext:
   valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: REDIS_URL, optional: true } }
 - name: METRICS_TOKEN
   valueFrom: { secretKeyRef: { name: {{ .Values.existingSecret }}, key: METRICS_TOKEN, optional: true } }
-{{- range $key := list "AUTH_INTROSPECTION_CLIENT_ID" "AUTH_INTROSPECTION_CLIENT_SECRET" "ENTITLEMENT_TOKEN" "AUDIT_ANCHOR_SIGNING_PRIVATE_KEY" "SMTP_USER" "SMTP_PASSWORD" "IMAP_USER" "IMAP_PASSWORD" "EMAIL_REFERENCE_SECRET" "CRM_CONTACT_TOKEN" "SMS_GATEWAY_TOKEN" }}
+{{- range $key := list "AUTH_INTROSPECTION_CLIENT_ID" "AUTH_INTROSPECTION_CLIENT_SECRET" "ENTITLEMENT_TOKEN" "AUDIT_ANCHOR_SIGNING_PRIVATE_KEY" "SMTP_USER" "SMTP_PASSWORD" "IMAP_USER" "IMAP_PASSWORD" "EMAIL_REFERENCE_SECRET" "UPLOAD_LINK_SECRET" "CRM_CONTACT_TOKEN" "SMS_GATEWAY_TOKEN" }}
 - name: {{ $key }}
   valueFrom: { secretKeyRef: { name: {{ $.Values.existingSecret }}, key: {{ $key }}, optional: true } }
 {{- end }}

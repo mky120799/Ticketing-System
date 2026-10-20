@@ -12,6 +12,7 @@ export function assertProductionSafety(env: NodeJS.ProcessEnv = process.env): vo
   if ((env.DATABASE_URL ?? '').includes('case_password')) problems.push('DATABASE_URL uses the development database password');
   if ((env.OBJECT_STORAGE_SECRET_ACCESS_KEY ?? '').startsWith('local-')) problems.push('Object storage uses a development secret');
   if ((env.EMAIL_REFERENCE_SECRET ?? '').startsWith('local-dev')) problems.push('EMAIL_REFERENCE_SECRET is the development value');
+  if ((env.UPLOAD_LINK_SECRET ?? '').startsWith('local-dev')) problems.push('UPLOAD_LINK_SECRET is the development value');
   if ((env.AUTH_INTROSPECTION_CLIENT_SECRET ?? '').startsWith('local-dev')) problems.push('The token-introspection secret is the development value');
   if (env.AUTH_ALLOWED_CLIENTS === undefined || env.AUTH_ALLOWED_CLIENTS === '') problems.push('AUTH_ALLOWED_CLIENTS is not set (tokens issued to any application would be accepted)');
   if (env.AUDIT_REQUIRE_RESTRICTED_DB_ROLE !== 'true') problems.push('AUDIT_REQUIRE_RESTRICTED_DB_ROLE is not true (the application could be running as an account that can alter the audit trail)');
