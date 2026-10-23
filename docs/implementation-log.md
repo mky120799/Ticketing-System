@@ -767,3 +767,69 @@ A customer who phones the bank has no portal login, yet may need to send identit
 **Resume bullets.**
 - Designed a stateless, HMAC-signed, expiring, single-purpose upload link for unauthenticated customers (token in the URL fragment and a header, uniform failure responses, per-link file limit, revocation).
 - Reused the governed communication pipeline and the scanned-upload pipeline end to end, verified in a live multi-browser, real-mail-server test.
+
+---
+
+## 29. A real interface: rebuilt staff console and customer portal
+
+The backend was bank-grade but the screens were a test harness: about 890 lines of React for the whole console, 19 lines of minified CSS, no URLs (the current screen was a `useState`, so refresh lost your place and nothing could be linked), a three-column grid where the create form permanently took a third of the screen, a ticket list made of buttons, and a ticket detail that stacked nine panels in one column because each backend feature had appended one. For a product a bank would buy and staff would use all day, the UI was the weakest part. Both front ends were rebuilt on the existing API client and sign-in code; the API itself needed one permission change (below).
+
+| Decision | What was built | Why |
+|---|---|---|
+| A design system, not hand-written CSS | **Mantine 8** components and a theme (`apps/web/src/theme.ts`) with one brand palette. A `cssVariablesResolver` swaps in darker shades wherever a colour is used for text or behind white text | Consistent, accessible components out of the box. Mantine's stock colours fail WCAG AA contrast (white on blue-6 is ~3.6:1); the overrides make every badge, button and caption pass, which the axe checks enforce. A bank re-brands by changing one palette |
+| A URL for every screen | **React Router**: `/tickets`, `/tickets/:id`, `/dashboard`, `/audit`, `/admin/:section`. The queue keeps view, filters and search in the query string; the case screen keeps the open tab | Refresh, Back, bookmarks and shared links all work. The person opening a link still only sees what their own access allows |
+| Return to the page you asked for | The wanted path travels through the identity provider in the OIDC `state`; after the redirect the console navigates there. Only same-site paths are accepted (`/x`, not `//evil.example`) | Deep links survive sign-in and step-up, without an open-redirect hole |
+| Server data in a cache | **TanStack Query** for every read; keys built in one file (`lib/query-keys.ts`). Changes go through `useTicketMutation`, which re-reads the ticket and writes it into the case screen and every cached list. A 409 ("changed by someone else") re-reads automatically | Loading and error states come for free, two components share one request, and the hand-written merge logic of the old `use-workspace` hook disappears |
+| Live updates feed the cache | The SSE stream still carries only an ID. On an event the ticket is re-read over REST and patched into the caches; a 403/404 removes it from lists and the open case shows "not available"; a reconnect invalidates everything | Same security property as before (events reveal nothing; policy is applied on read), now without manual state juggling |
+| A real queue | **TanStack Table** with sortable columns (ticket, status, priority, next SLA due, queue, assignee, age), quick views with counts (Open, Assigned to me, Unassigned, Overdue, Complaints, All) and filters | The case worker's main screen is a sortable list, not a pile of buttons |
+| A case screen | Header (subject, badges, *Assign*, *Change status*), description, then tabs: Activity, Communications, Attachments, Related, Compliance, Retention (supervisors), Audit trail (auditors); a summary sidebar with SLA due times and masked references | The summary is always visible and the detail is one click away, instead of a long scroll |
+| Forms that know the user | *New ticket* is a dialog; branch, department, entity and country come from `/me` (the API requires them to match the creator's scope anyway); category pre-selects its queue | Removes busywork and a class of "outside your scope" errors |
+| API features finally reachable | Assign / return to pool, edit priority and description, customer-visible replies, and the audited **reveal** of customer references (step-up) existed in the API but had no screen | The console now covers the permission matrix in `roles-and-access.md` |
+| Role-aware, not role-enforcing | `session/roles.ts` maps roles to capabilities (`workTicket`, `supervise`, ...) to decide what to *show*. Administrators land in Administration and get no live feed | A tidy screen per role; the API stays the only authority |
+| One feedback channel | Failed changes raise a toast from one place (the query client's mutation cache); successes confirm; loading uses skeletons; errors offer *Try again* | Replaces a single red banner that was easy to miss and never cleared |
+| Charts that follow the rules | Created-vs-resolved is a two-series line chart (validated colour-blind-safe pair, legend always shown, table toggle). Single-measure breakdowns are HTML bar rows with the number printed beside each bar | Small values stay readable without hovering, and the bars read as a plain list to screen readers |
+| Administration by area | Seven tabs (routing, intake, service levels, compliance, workflows, templates, integration events), each a list plus a *New/Edit* dialog. Workflows render as readable "from → to" moves; the JSON editor validates as you type. Templates preview live | Replaces fourteen forms on one page |
+| Portal | Same design system, plain-English wording, a chat-style conversation, document status badges, and focus moved to the opened request for screen-reader users | Customer-facing quality to match the staff console |
+| Fast first load | Dashboard, audit and administration load on demand; libraries are split into cacheable vendor chunks; charts load only with the dashboard | A case worker's first screen downloads about 220 KB (gzip) |
+
+**API change.** `GET /configuration/regulatory-profiles` was administrator-only, so the console's *Mark as complaint* drop-down could never load for the case workers who use it. Reading active profiles (labels and day counts, filtered to the user's jurisdiction) is now allowed for roles that can update tickets; editing is still administrator-only (`roles-and-access.md` updated). When no profile is listed for the user's jurisdiction, the console falls back to typing the profile key.
+
+**Defects found by running it, all fixed.** Running the containers and real browsers (not just the compiler) found four problems:
+1. **A crash on typing** in the audit search and the new-ticket form: a state updater read `event.currentTarget` after React had cleared it. The value is now read before the updater runs.
+2. **ARIA on the wrong element**: the notification popover put `aria-haspopup` on the badge wrapper instead of the button.
+3. **An unlabelled close button** on toast messages.
+4. **`aria-label` on a plain `div`** in the loading skeleton, which ARIA forbids (now a `role="status"` region with hidden text).
+
+Visual review from screenshots also caught truncated status badges, a clipped unread count and wrapping column headers.
+
+**Limits.** Sorting and quick views apply to the tickets already loaded (50 per page, newest first); the search endpoint returns basic fields only, so views are disabled while searching. A server-side filtered queue would need new API parameters. Dark mode is not offered (the contrast overrides are tuned for white). The portal and console each carry a copy of the theme; a shared package would remove that. The axe checks are automated and do not replace a specialist accessibility review.
+
+**Verification.** Web and portal type-check, lint and build cleanly; 38 API unit tests pass. Seven Playwright tests pass against the full container stack (real Keycloak, ClamAV, object storage, mail server), with axe WCAG 2.1 A/AA checks on the queue, case screen, dashboard, administration, audit console and portal. New coverage: a deep link survives sign-in; a refresh keeps the case open; notes and the status dialog; the admin tabs; auditors get no *New ticket* button.
+
+**Interview summary.** "The backend was solid but the UI was a test console, which would sink a bank demo. I rebuilt both front ends on Mantine, React Router and TanStack Query/Table. Every screen got a URL, and deep links survive OIDC sign-in safely. Server data moved into a cache that the existing SSE feed keeps fresh. The ticket detail became a proper case screen, and actions the API already supported but no screen exposed now have one. Running it in real browsers with accessibility checks found a crash and three ARIA faults before any user did."
+
+**Resume bullets.**
+- Rebuilt a banking case-management console and customer portal in React (Mantine, React Router, TanStack Query and Table): URL-addressable screens, a sortable and filterable queue, and a tabbed case workspace, with code-splitting bringing the first screen to about 220 KB gzipped.
+- Wired server-sent live events into a query cache with policy-checked re-reads, and implemented safe post-login deep links via OIDC state with open-redirect protection.
+- Enforced WCAG AA contrast through theme-level colour overrides and verified with Playwright and axe across seven end-to-end flows against a full container stack.
+
+---
+
+## 30. People shown by name: a staff directory
+
+Tickets and the audit trail store a person as their identity-provider **subject ID** (for example `dd8a043a-e38f-...`), which is right for evidence (it never changes or gets reused) but useless on screen: the assignee, "created by", note authors and every audit actor appeared as an ID.
+
+| Decision | What was built | Why |
+|---|---|---|
+| Keep IDs in the data, add names for display | A `staff_directory` table (subject ID → display name, username, email, entity, country, queues, roles). Nothing that stores a person changed | The record stays stable and auditable; names are a presentation layer |
+| Where names come from | The token's standard `name`, `preferred_username` and `email` claims. `GET /me` (called once when the console opens) upserts the caller's row. A failure is logged and never blocks sign-in | No new integration needed locally; a bank can fill the same table from its HR directory (for example over SCIM) |
+| Lookup | `POST /directory/lookup` (up to 200 IDs → names), limited to the caller's entity and country, for any staff role; `GET /directory/people?queue=` lists case agents and supervisors, for supervisors and administrators only | POST keeps lists of IDs out of URLs and logs. Staff names only, never customer data |
+| Console | One `<PersonName>` component used for assignee, created by, note authors, status history, ticket audit trail, audit search and queue members. Requests made in the same few milliseconds are batched into one call and cached | A 50-row table makes one request, not 50. The exact ID stays available in a tooltip (and in the audit event detail), because the ID is what the evidence records |
+| Pick people by name | The Assign dialog and "Add queue member" are searchable lists of names; leaving the assignee empty still returns the ticket to the queue | Supervisors no longer paste IDs |
+
+**Limits.** A person appears by name only after they have opened the console once (until then the short ID is shown, with a tooltip explaining why); a bank would preload the directory from its HR system. Names in the directory update when the person next signs in. The audit search's Actor filter still takes an ID.
+
+**Verification.** API type-check, 38 unit tests and the API boundary tests pass; the migration applied in the container stack. Browser checks with the case agent and auditor: "Created by Local Case Agent", the note author and the queue's Assignee column show names, and the auditor's search shows the actor's name, with the accessibility check passing. The supervisor flow (assign by name) is in `staff.spec.ts` but could not run here because the local `local-supervisor` account had MFA (a one-time code) enabled in Keycloak for an experiment.
+
+**Interview summary.** "Evidence should reference a stable identifier, people should see a name. I kept subject IDs in tickets and the audit trail and added a scoped staff directory fed from the token's standard claims, with a batched, cached lookup in the UI so a full table costs one request."
+

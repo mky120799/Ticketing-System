@@ -14,6 +14,10 @@ export interface UserContext {
   /** When the user last authenticated (epoch seconds) and how (`acr`), for step-up decisions. */
   authTime?: number;
   acr?: string;
+  /** Who the person is, for display only (never used for authorisation): the token's `name`, `preferred_username` and `email`. */
+  displayName?: string;
+  username?: string;
+  email?: string;
 }
 
 declare module 'fastify' { interface FastifyRequest { user?: UserContext; correlationId?: string; } }

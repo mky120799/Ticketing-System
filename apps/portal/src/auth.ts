@@ -8,4 +8,6 @@ export const userManager = new UserManager({
 });
 export const signIn = (): Promise<void> => userManager.signinRedirect();
 export const signOut = (): Promise<void> => userManager.signoutRedirect();
-export const completeSignIn = async (): Promise<User | null> => (await userManager.signinCallback()) ?? null;
+/** Cached so it runs once even when React StrictMode runs the effect twice: the sign-in code can only be redeemed once. */
+let pendingSignIn: Promise<User | null> | null = null;
+export const completeSignIn = (): Promise<User | null> => (pendingSignIn ??= userManager.signinCallback().then((user) => user ?? null));

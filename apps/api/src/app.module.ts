@@ -22,6 +22,7 @@ import { WorkflowModule } from './workflow/workflow.module.js';
 import { LiveModule } from './live/live.module.js';
 import { StorageModule } from './storage/storage.module.js';
 import { UploadsModule } from './uploads/uploads.module.js';
+import { DirectoryModule } from './directory/directory.module.js';
 
-@Module({ imports: [DatabaseModule, CacheModule, StorageModule, AuditModule, AuthModule, TicketsModule, DashboardModule, OutboxModule, ConfigurationModule, IntegrationModule, LiveModule, WorkflowModule, IntakeModule, ComplianceModule, MetricsModule, NotificationsModule, EmailModule, PortalModule, OperationsModule, UploadsModule], controllers: [HealthController], providers: [{ provide: APP_INTERCEPTOR, useClass: DeniedAuthorizationInterceptor }] })
+@Module({ imports: [DatabaseModule, CacheModule, StorageModule, AuditModule, AuthModule, TicketsModule, DashboardModule, OutboxModule, ConfigurationModule, IntegrationModule, LiveModule, WorkflowModule, IntakeModule, ComplianceModule, MetricsModule, NotificationsModule, EmailModule, PortalModule, OperationsModule, UploadsModule, DirectoryModule], controllers: [HealthController], providers: [{ provide: APP_INTERCEPTOR, useClass: DeniedAuthorizationInterceptor }] })
 export class AppModule {}

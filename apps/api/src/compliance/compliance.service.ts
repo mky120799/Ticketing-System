@@ -147,7 +147,8 @@ export class ComplianceService {
   }
 
   async listProfiles(user: UserContext): Promise<unknown[]> {
-    this.policy.assertPermission(user, 'configuration:write');
+    // Read-only and non-sensitive (labels and day counts): case workers need it to pick a profile when marking a complaint.
+    if (!this.policy.has(user, 'configuration:write') && !this.policy.has(user, 'ticket:update')) throw new ForbiddenException('Permission denied');
     const result = await this.db.query<{ profile_key: string; label: string; jurisdiction: string; acknowledge_business_days: number; final_response_calendar_days: number; at_risk_days: number; active: boolean }>('SELECT profile_key,label,jurisdiction,acknowledge_business_days,final_response_calendar_days,at_risk_days,active FROM regulatory_profiles WHERE jurisdiction=$1 ORDER BY profile_key', [user.country]);
     return result.rows.map((r) => ({ profileKey: r.profile_key, label: r.label, jurisdiction: r.jurisdiction, acknowledgeBusinessDays: r.acknowledge_business_days, finalResponseCalendarDays: r.final_response_calendar_days, atRiskDays: r.at_risk_days, active: r.active }));
   }

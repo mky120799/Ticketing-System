@@ -131,6 +131,10 @@ export class AuthGuard implements CanActivate {
       authTime:
         typeof payload.auth_time === "number" ? payload.auth_time : undefined,
       acr: typeof payload.acr === "string" ? payload.acr : undefined,
+      // Display only (never used for access decisions): feeds the staff directory so screens can show names.
+      displayName: this.stringClaim(payload, "name") || undefined,
+      username: this.stringClaim(payload, "preferred_username") || undefined,
+      email: this.stringClaim(payload, "email") || undefined,
     };
   }
 

@@ -1,74 +1,115 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+/**
+ * The signed-in customer portal.
+ *
+ *   ┌──────────────────────────────────────────────────────────┐
+ *   │ header: bank name · your name · Sign out                 │
+ *   ├────────────────────┬─────────────────────────────────────┤
+ *   │ Tell us what       │ The request you picked:             │
+ *   │ happened (form)    │ status, updates, reply, documents   │
+ *   │ Your history       │                                     │
+ *   └────────────────────┴─────────────────────────────────────┘
+ *
+ * The portal is small, so it keeps its data in plain React state rather than a query cache.
+ * Wording is plain English for the public: no internal codes, no jargon.
+ */
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, AppShell, Button, Center, Container, Grid, Group, Loader, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { IconBuildingBank, IconCircleCheck } from '@tabler/icons-react';
 import type { User } from 'oidc-client-ts';
-import { completeSignIn, signIn, signOut, userManager } from './auth';
-import { createRequest, DOCUMENT_TYPES, getRequest, listRequests, MAX_DOCUMENT_BYTES, sendDocument, sendMessage, type RequestDetail, type RequestSummary } from './api';
+import { signIn, signOut } from './auth';
+import { getRequest, listRequests, type RequestDetail as Detail, type RequestSummary } from './api';
+import { usePortalSession } from './session';
+import { NewRequestForm } from './components/new-request-form';
+import { RequestHistory } from './components/request-history';
+import { RequestDetail } from './components/request-detail';
 
-const when = (value: string) => new Date(value).toLocaleString();
+export function App() {
+  const { user, ready, error } = usePortalSession();
+  if (!ready) return <Center mih="100vh" component="main"><Loader aria-label="Loading" /></Center>;
+  if (!user) return <SignInPage error={error} />;
+  return <Portal user={user} />;
+}
 
-export function App(): JSX.Element {
-  const [user, setUser] = useState<User | null>(null); const [ready, setReady] = useState(false);
-  const [requests, setRequests] = useState<RequestSummary[]>([]); const [selected, setSelected] = useState<RequestDetail | null>(null);
-  const [message, setMessage] = useState(''); const [notice, setNotice] = useState(''); const [error, setError] = useState('');
-  const [kind, setKind] = useState<'request' | 'complaint' | 'correction'>('request'); const [subject, setSubject] = useState(''); const [description, setDescription] = useState('');
-  const [sending, setSending] = useState(false); const fileInput = useRef<HTMLInputElement>(null);
-  const submissionKey = useRef(crypto.randomUUID()); const heading = useRef<HTMLHeadingElement>(null);
-  const fail = (e: unknown) => { setNotice(''); setError(e instanceof Error ? e.message : 'Something went wrong.'); };
+function SignInPage({ error }: { error: string }) {
+  return (
+    <Center mih="100vh" p="md" component="main" bg="gray.0">
+      <Paper p="xl" maw={480} w="100%" shadow="sm">
+        <Stack gap="md">
+          <ThemeIcon size={48} radius="md" aria-hidden><IconBuildingBank size={28} /></ThemeIcon>
+          <Title order={1}>Make a request or complaint</Title>
+          <Text>Sign in to raise a request or complaint with us and to follow its progress.</Text>
+          {error && <Alert color="red" role="alert">{error}</Alert>}
+          <Button size="md" onClick={() => void signIn()}>Sign in</Button>
+          <Text size="sm" c="dimmed">We will never ask for your PIN or password in this portal.</Text>
+        </Stack>
+      </Paper>
+    </Center>
+  );
+}
 
-  useEffect(() => { void (async () => { try { const completing = window.location.search.includes('code='); const current = completing ? await completeSignIn() : await userManager.getUser(); if (completing) window.history.replaceState({}, document.title, window.location.pathname); setUser(current && !current.expired ? current : null); } catch { setError('Sign-in could not be completed.'); } finally { setReady(true); } })(); }, []);
-  const refresh = (current: User) => { void listRequests(current).then(setRequests).catch(fail); };
-  useEffect(() => { const loaded = (renewed: User) => setUser(renewed); const expired = () => { void signOut(); }; userManager.events.addUserLoaded(loaded); userManager.events.addAccessTokenExpired(expired); return () => { userManager.events.removeUserLoaded(loaded); userManager.events.removeAccessTokenExpired(expired); }; }, []);
-  useEffect(() => { if (user) refresh(user); }, [user]);
+/** The feedback line under the header: a confirmation (green) or a problem (red). Announced to screen readers. */
+export type Feedback = { kind: 'notice' | 'error'; text: string } | null;
 
-  const open = async (id: string) => { if (!user) return; try { setSelected(await getRequest(user, id)); setError(''); setTimeout(() => heading.current?.focus(), 0); } catch (e) { fail(e); } };
-  const submit = async (event: FormEvent) => {
-    event.preventDefault(); if (!user) return; setError('');
-    try { const created = await createRequest(user, { kind, subject: subject.trim(), description: description.trim() }, submissionKey.current); submissionKey.current = crypto.randomUUID(); setSubject(''); setDescription(''); setNotice(`Thank you. We have received your ${kind === 'complaint' ? 'complaint' : kind === 'correction' ? 'correction request' : 'request'}. Your reference is ${created.reference}.`); refresh(user); await open(created.id); }
+function Portal({ user }: { user: User }) {
+  const [requests, setRequests] = useState<RequestSummary[]>([]);
+  const [selected, setSelected] = useState<Detail | null>(null);
+  const [feedback, setFeedback] = useState<Feedback>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+
+  const fail = useCallback((e: unknown) => setFeedback({ kind: 'error', text: e instanceof Error ? e.message : 'Something went wrong.' }), []);
+  const refresh = useCallback(() => { void listRequests(user).then(setRequests).catch(fail); }, [user, fail]);
+  useEffect(refresh, [refresh]);
+
+  /** Opens a request and moves keyboard focus to its heading, so screen-reader users hear what opened. */
+  const open = useCallback(async (id: string) => {
+    try { setSelected(await getRequest(user, id)); setTimeout(() => heading.current?.focus(), 0); }
     catch (e) { fail(e); }
-  };
-  const reply = async (event: FormEvent) => { event.preventDefault(); if (!user || !selected || !message.trim()) return; try { await sendMessage(user, selected.id, message.trim()); setMessage(''); setNotice('Your message has been sent.'); await open(selected.id); } catch (e) { fail(e); } };
+  }, [user, fail]);
 
-  const attach = async (event: FormEvent) => {
-    event.preventDefault(); const file = fileInput.current?.files?.[0]; if (!user || !selected || !file) return;
-    if (!DOCUMENT_TYPES.includes(file.type)) { fail(new Error('Please choose a PDF, a JPEG or PNG picture, or a text file.')); return; }
-    if (file.size > MAX_DOCUMENT_BYTES) { fail(new Error(`Files can be up to ${MAX_DOCUMENT_BYTES / 1024 / 1024} MB.`)); return; }
-    setSending(true); setError('');
-    try { await sendDocument(user, selected.id, file); if (fileInput.current) fileInput.current.value = ''; setNotice('Your document has been sent. We check every document before our staff can open it.'); await open(selected.id); } catch (e) { fail(e); } finally { setSending(false); }
-  };
+  const name = String(user.profile.preferred_username ?? user.profile.name ?? 'You');
 
-  if (!ready) return <main><p role="status">Loading…</p></main>;
-  if (!user) return <main className="narrow"><h1>Make a request or complaint</h1><p>Sign in to raise a request or complaint with us and to follow its progress.</p>{error && <p className="error" role="alert">{error}</p>}<button onClick={() => void signIn()}>Sign in</button></main>;
-  return <main>
-    <header><h1>Your requests and complaints</h1><div><span>{user.profile.preferred_username ?? user.profile.name ?? 'You'}</span> <button className="secondary" onClick={() => void signOut()}>Sign out</button></div></header>
-    <div aria-live="polite">{notice && <p className="notice">{notice}</p>}{error && <p className="error" role="alert">{error}</p>}</div>
-    <div className="layout">
-      <section aria-labelledby="new-heading"><h2 id="new-heading">Tell us what happened</h2>
-        <form onSubmit={(event) => void submit(event)}>
-          <fieldset><legend>What would you like to do?</legend>
-            <label className="inline"><input type="radio" name="kind" checked={kind === 'request'} onChange={() => setKind('request')} /> Make a request or ask a question</label>
-            <label className="inline"><input type="radio" name="kind" checked={kind === 'complaint'} onChange={() => setKind('complaint')} /> Make a complaint</label>
-            <label className="inline"><input type="radio" name="kind" checked={kind === 'correction'} onChange={() => setKind('correction')} /> Ask us to correct information we hold about me</label>
-          </fieldset>
-          <label>Short summary<input required minLength={3} maxLength={200} value={subject} onChange={(event) => setSubject(event.target.value)} /></label>
-          <label>Details<textarea required minLength={3} maxLength={5000} rows={6} value={description} onChange={(event) => setDescription(event.target.value)} aria-describedby="privacy-hint" /></label>
-          <p id="privacy-hint" className="hint">Please do not include full card numbers, passwords or PINs. We will never ask for them here.</p>
-          <button type="submit">Send to the bank</button>
-        </form>
-      </section>
-      <section aria-labelledby="list-heading"><h2 id="list-heading">Your history</h2>
-        {requests.length ? <ul className="list">{requests.map((item) => <li key={item.id}><button className="item" onClick={() => void open(item.id)} aria-current={selected?.id === item.id}><strong>{item.subject}</strong><span>{item.reference} · {item.kind === 'complaint' ? 'Complaint · ' : item.kind === 'correction' ? 'Correction request · ' : ''}{item.status}</span><small>Raised {when(item.createdAt)}</small></button></li>)}</ul> : <p>You have not raised anything yet.</p>}
-      </section>
-      <section aria-labelledby="detail-heading">{selected ? <>
-        <h2 id="detail-heading" tabIndex={-1} ref={heading}>{selected.subject}</h2>
-        <p><strong>Reference {selected.reference}</strong> · Status: {selected.status}</p>
-        {selected.complaint && <p className="notice">{selected.complaint.acknowledged ? `We have acknowledged your ${selected.kind === 'correction' ? 'request' : 'complaint'}.` : `We will acknowledge your ${selected.kind === 'correction' ? 'request' : 'complaint'} shortly.`}{selected.complaint.finalResponseDueBy ? ` You will receive our final response by ${new Date(selected.complaint.finalResponseDueBy).toLocaleDateString()}.` : ''}</p>}
-        <h3>What you told us</h3><p className="pre">{selected.description}</p>
-        <h3>Updates</h3>
-        {selected.updates.length ? <ol className="updates">{selected.updates.map((u, index) => <li key={index} className={u.from}><strong>{u.from === 'you' ? 'You' : 'The bank'}{u.title ? ` — ${u.title}` : ''}</strong><p className="pre">{u.text}</p><small>{when(u.at)}</small></li>)}</ol> : <p>No updates yet. We will let you know here.</p>}
-        <form onSubmit={(event) => void reply(event)}><label>Add a message<textarea required maxLength={5000} rows={4} value={message} onChange={(event) => setMessage(event.target.value)} /></label><button type="submit">Send message</button></form>
-        <h3>Documents you have sent</h3>
-        {selected.attachments.length ? <ul className="documents">{selected.attachments.map((d) => <li key={d.id}><strong>{d.filename}</strong> — {d.status === 'received' ? 'Received' : d.status === 'being_checked' ? 'Being checked' : 'Not accepted. Please send a different file or contact us.'}</li>)}</ul> : <p>You have not sent any documents.</p>}
-        <form onSubmit={(event) => void attach(event)}><label>Add a document<input ref={fileInput} type="file" required accept=".pdf,.jpg,.jpeg,.png,.txt,application/pdf,image/jpeg,image/png,text/plain" aria-describedby="doc-hint" /></label><p id="doc-hint" className="hint">PDF, JPEG, PNG or text files up to {MAX_DOCUMENT_BYTES / 1024 / 1024} MB. Please cover or leave out full card numbers and PINs.</p><button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send document'}</button></form>
-      </> : <><h2 id="detail-heading">Details</h2><p>Choose a request from your history to see its progress.</p></>}</section>
-    </div>
-  </main>;
+  return (
+    <AppShell header={{ height: 64 }} padding="md">
+      <AppShell.Header>
+        <Container size="lg" h="100%">
+          <Group h="100%" justify="space-between" wrap="nowrap">
+            <Group gap="sm" wrap="nowrap">
+              <ThemeIcon size="lg" radius="md" aria-hidden><IconBuildingBank size={20} /></ThemeIcon>
+              <Text fw={700}>Customer help</Text>
+            </Group>
+            <Group gap="sm" wrap="nowrap">
+              <Text size="sm" visibleFrom="xs">{name}</Text>
+              <Button variant="default" size="sm" onClick={() => void signOut()}>Sign out</Button>
+            </Group>
+          </Group>
+        </Container>
+      </AppShell.Header>
+
+      <AppShell.Main bg="gray.0">
+        <Container size="lg" py="md">
+          <Title order={1} mb="md">Your requests and complaints</Title>
+          <div aria-live="polite">
+            {feedback && (
+              <Alert mb="md" color={feedback.kind === 'error' ? 'red' : 'green'} icon={feedback.kind === 'notice' ? <IconCircleCheck size={18} /> : undefined}
+                role={feedback.kind === 'error' ? 'alert' : undefined} withCloseButton onClose={() => setFeedback(null)} closeButtonLabel="Dismiss message">
+                {feedback.text}
+              </Alert>
+            )}
+          </div>
+          <Grid gutter="lg">
+            <Grid.Col span={{ base: 12, md: 5 }}>
+              <Stack gap="lg">
+                <NewRequestForm user={user} onCreated={(id, message) => { setFeedback({ kind: 'notice', text: message }); refresh(); void open(id); }} onError={fail} />
+                <RequestHistory requests={requests} selectedId={selected?.id} onOpen={(id) => void open(id)} />
+              </Stack>
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, md: 7 }}>
+              <RequestDetail user={user} request={selected} headingRef={heading}
+                onChanged={(message) => { setFeedback({ kind: 'notice', text: message }); if (selected) void open(selected.id); }} onError={fail} />
+            </Grid.Col>
+          </Grid>
+        </Container>
+      </AppShell.Main>
+    </AppShell>
+  );
 }

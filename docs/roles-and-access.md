@@ -99,6 +99,9 @@ Legend: **✔** allowed within scope · **—** not allowed (403) · **step-up**
 | Edit queues, categories, SLA policies, communication templates | — | — | — | — | ✔ | Audited; changes are published as events. |
 | Manage queue members, assignment rules, escalation rules, intake channels | — | — | — | — | ✔ | |
 | Edit workflows (lifecycles and which roles may do each move) | — | — | — | — | ✔ | A definition is rejected if some status can no longer reach a closing state. |
+| Look up colleagues' names from their IDs (staff directory) | ✔ | ✔ | ✔ | ✔ | ✔ | Same entity and country only; staff names, no customer data. |
+| List people who can be assigned work (assignee and queue-member pickers) | — | — | ✔ | — | ✔ | Case agents and supervisors in scope, optionally filtered by queue. |
+| Read regulatory profiles (to pick one when marking a complaint) | — | ✔ | ✔ | — | ✔ | Labels and day counts only, filtered to the user's jurisdiction. |
 | Edit regulatory profiles, business hours, holidays | — | — | — | — | ✔ | |
 | View dead-lettered events, replay them | — | — | — | — | ✔ | |
 | Read Prometheus metrics | — | — | — | — | — | Needs a separate machine token, not a user role. |

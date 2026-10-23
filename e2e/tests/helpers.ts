@@ -11,6 +11,23 @@ export async function signIn(page: Page, appUrl: string, button: string | RegExp
   await page.waitForURL(`${appUrl}/**`);
 }
 
+/**
+ * Creates a ticket through the staff console's "New ticket" dialog and waits for its case screen to open.
+ * Branch, department, entity and country are filled from the signed-in profile, so the test does not type them.
+ */
+export async function createTicket(page: Page, ticket: { subject: string; description: string; reference: string }): Promise<void> {
+  await page.getByRole('button', { name: 'New ticket' }).click();
+  const dialog = page.getByRole('dialog', { name: 'New ticket' });
+  await dialog.getByLabel('Subject').fill(ticket.subject);
+  await dialog.getByLabel('Description').fill(ticket.description);
+  await dialog.getByLabel('Category').selectOption('service-request');
+  await dialog.getByLabel('Queue').selectOption('customer-support');
+  await dialog.getByLabel('Customer reference').fill(ticket.reference);
+  await dialog.getByRole('button', { name: 'Create ticket' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: ticket.subject })).toBeVisible();
+  await expect(page).toHaveURL(/\/tickets\/[0-9a-f-]{36}/);
+}
+
 /** Fails on serious or critical accessibility violations (WCAG 2.1 A/AA rules). */
 export async function expectAccessible(page: Page, label: string): Promise<void> {
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();

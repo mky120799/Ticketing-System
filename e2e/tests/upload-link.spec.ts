@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { ImapFlow } from 'imapflow';
-import { STAFF, expectAccessible, signIn } from './helpers';
+import { STAFF, createTicket, expectAccessible, signIn } from './helpers';
 
 /** Reads the newest message to an address from the test mail server (mailbox login = the address). */
 async function latestMessage(address: string, subjectPart: string): Promise<string> {
@@ -19,19 +19,13 @@ const decodeQuotedPrintable = (text: string) => text.replace(/=\r?\n/g, '').repl
 test('staff send a secure upload link and a caller with no account uses it', async ({ page, browser }) => {
   const caller = `caller-${Date.now()}@example.test`;
   await signIn(page, STAFF, /Sign in with SSO/, 'local-supervisor');
-  await expect(page.getByRole('heading', { name: 'Case workspace' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Tickets' })).toBeVisible();
 
   const subject = `Link test ticket ${Date.now()}`;
-  const form = page.locator('section.create form');
-  await form.getByLabel('category').fill('service-request'); await form.getByLabel('queue').fill('customer-support');
-  await form.getByLabel('branch Code').fill('BLR-01'); await form.getByLabel('department').fill('operations');
-  await form.getByLabel('legal Entity').fill('BANK-IN'); await form.getByLabel('country').fill('IN');
-  await form.getByLabel('subject').fill(subject); await form.getByLabel('source System').fill('CRM'); await form.getByLabel('opaque Reference').fill('opaque-customer-5678');
-  await form.getByLabel('description').fill('A caller needs to send identity documents.');
-  await form.getByRole('button', { name: 'Create ticket' }).click();
-  await expect(page.getByRole('heading', { name: subject })).toBeVisible();
+  await createTicket(page, { subject, description: 'A caller needs to send identity documents.', reference: 'opaque-customer-5678' });
 
   // ask for documents: the secure link is created with the message
+  await page.getByRole('tab', { name: 'Communications' }).click();
   await page.getByLabel('Template').selectOption('email:document_request_email');
   await page.getByLabel('Recipient reference').fill(`mailto:${caller}`);
   await page.getByRole('button', { name: 'Queue communication' }).click();

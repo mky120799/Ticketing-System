@@ -198,7 +198,7 @@ Phase 1 is complete and Phase 2 is built as far as it can be without the bank's 
 
 ## 10. Technology choices
 
-- React + TypeScript provides a typed, accessible operator UI and shared validation contracts.
+- React + TypeScript provides a typed, accessible operator UI and shared validation contracts. The UI is built on Mantine (component library, with contrast-tuned colours), TanStack Query (server-data cache, refreshed by the SSE live feed), TanStack Table (the queue) and React Router (a URL per screen).
 - Node.js 22 LTS + NestJS + Fastify provides modular dependency boundaries, strong middleware/guard support, and efficient I/O for API/integration workloads.
 - PostgreSQL is authoritative for transactions, JSONB configurable fields, relational integrity, migrations, and audit/outbox atomicity.
 - Camunda 8 is appropriate for long-running BPMN workflows, timers, escalations, and human tasks; it is not the system of record.
