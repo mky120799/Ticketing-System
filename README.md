@@ -2,7 +2,7 @@
 
 Security-first case-management and ticketing platform for banks: a modular monolith (NestJS API, React console, PostgreSQL) deployed single-tenant per bank, with jurisdiction rules, workflows and routing held as configuration. It uses PostgreSQL for authoritative ticket and append-only audit data, and Keycloak only as a **development OIDC provider**. The application does not create, store, or verify local passwords.
 
-The design baseline, permission matrix, architecture boundaries, API strategy, phased plan, risks, and pilot acceptance boundary are documented in [`docs/architecture.md`](docs/architecture.md). The implemented slice and its deliberate production boundaries are in [`docs/first-increment.md`](docs/first-increment.md).
+The design baseline, permission matrix, architecture boundaries, API strategy, phased plan, risks, and pilot acceptance boundary are documented in [`docs/architecture/architecture.md`](docs/architecture/architecture.md). The implemented slice and its deliberate production boundaries are in [`docs/project/first-increment.md`](docs/project/first-increment.md).
 
 ## Run locally
 
@@ -16,6 +16,8 @@ open http://localhost:5174                     # customer portal: sign in as loc
 npm install && npm run intake:simulate --workspace=@bank-case/api   # or send a real email to cases@bank.test (SMTP localhost:3025)
 ```
 
+Shortcut: `./stack.sh start | stop | rebuild | status | logs` wraps these commands (run `./stack.sh` for the full list).
+
 **For development (hot reload):**
 
 1. Copy `apps/api/.env.example` to `apps/api/.env` and `apps/web/.env.example` to `apps/web/.env`.
@@ -25,9 +27,9 @@ npm install && npm run intake:simulate --workspace=@bank-case/api   # or send a 
 
 If you ran an earlier version, recreate Keycloak to import the current realm: `docker compose up -d --force-recreate keycloak`.
 
-**Tests.** `npm test` (33 unit tests); `npm run test:e2e` (API boundary); `npm run test:integration --workspace=@bank-case/api` (database integration; needs a migrated, otherwise empty database). Suites that need live services are switched on with environment variables: `STORAGE_TEST=1` (object store + ClamAV), `EMAIL_TEST=1` (mail server), `ROLES_TEST=1` (a superuser connection, to prove the restricted database account), `KAFKA_TEST_BROKERS=localhost:19092`; start the services with `docker compose --profile app up -d`. Browser tests with accessibility checks: `cd e2e && npm install && npx playwright install chromium && npx playwright test` (see `e2e/README.md`). Load test: `loadtest/` (see `docs/capacity.md`).
+**Tests.** `npm test` (33 unit tests); `npm run test:e2e` (API boundary); `npm run test:integration --workspace=@bank-case/api` (database integration; needs a migrated, otherwise empty database). Suites that need live services are switched on with environment variables: `STORAGE_TEST=1` (object store + ClamAV), `EMAIL_TEST=1` (mail server), `ROLES_TEST=1` (a superuser connection, to prove the restricted database account), `KAFKA_TEST_BROKERS=localhost:19092`; start the services with `docker compose --profile app up -d`. Browser tests with accessibility checks: `cd e2e && npm install && npx playwright install chromium && npx playwright test` (see `e2e/README.md`). Load test: `loadtest/` (see `docs/operations/capacity.md`).
 
-**Documentation.** [`docs/project-status.md`](docs/project-status.md) (what is built), [`docs/production-readiness.md`](docs/production-readiness.md) (what a go-live still needs), [`docs/implementation-log.md`](docs/implementation-log.md) (how each feature was built and why), [`docs/deployment.md`](docs/deployment.md), [`docs/security.md`](docs/security.md), [`docs/bank-onboarding.md`](docs/bank-onboarding.md), [`docs/runbooks.md`](docs/runbooks.md), [`docs/disaster-recovery.md`](docs/disaster-recovery.md), [`docs/capacity.md`](docs/capacity.md), [`docs/events.md`](docs/events.md) (event catalogue), [`docs/user-guide.md`](docs/user-guide.md), [`docs/roles-and-access.md`](docs/roles-and-access.md) (who can do what), [`docs/learn-nestjs/`](docs/learn-nestjs/README.md) (a NestJS course built on this code).
+**Documentation.** Start at [`docs/README.md`](docs/README.md). It links to [`docs/project/project-status.md`](docs/project/project-status.md), [`docs/operations/production-readiness.md`](docs/operations/production-readiness.md), [`docs/project/implementation-log.md`](docs/project/implementation-log.md), [`docs/operations/deployment.md`](docs/operations/deployment.md), [`docs/security/security-pack.md`](docs/security/security-pack.md), [`docs/product/bank-onboarding.md`](docs/product/bank-onboarding.md), [`docs/operations/runbooks.md`](docs/operations/runbooks.md), [`docs/operations/disaster-recovery.md`](docs/operations/disaster-recovery.md), [`docs/operations/capacity.md`](docs/operations/capacity.md), [`docs/product/events.md`](docs/product/events.md) (event catalogue), [`docs/product/user-guide.md`](docs/product/user-guide.md), [`docs/security/roles-and-access.md`](docs/security/roles-and-access.md) (who can do what), and [`docs/learn-nestjs/`](docs/learn-nestjs/README.md) (a NestJS course built on this code).
 
 Keycloak runs at `http://localhost:8080`. The development realm has `local-branch-agent`, `local-case-agent`, `local-case-agent-2`, `local-supervisor`, `local-auditor` and `local-admin`, all with password `local-dev-only-change-me`, plus an `intake-gateway` service client (secret `local-dev-only-intake-secret`). These credentials exist only in the disposable development realm and are never handled by the application; remove them before sharing an environment. Health checks: `GET /v1/health/live` and `GET /v1/health/ready`.
 
@@ -59,8 +61,8 @@ Keycloak runs at `http://localhost:8080`. The development realm has `local-branc
 - Audited report exports are available to auditors and preserve the same masked/minimized event payload.
 - Redis is an optional, fail-open cache for safe active communication-template metadata; PostgreSQL remains authoritative and template writes invalidate the cache.
 - Queue and category choices are configuration-backed and filtered by the caller's authorization claims.
-- The React staff console (Mantine design system, TanStack Query and Table, React Router) has a URL for every screen: a sortable, filterable ticket queue, a full case screen with tabs (activity, communications, attachments, related, compliance, retention, audit trail), a charted dashboard, the auditor console, and administration split by area. Buttons follow the user's role, but the API is the only authority. See `docs/implementation-log.md` entry 29.
-- Authorized users see ticket changes live over an SSE stream fed by transactional `pg_notify`; events are policy-filtered per subscriber and carry no customer data (see `docs/implementation-log.md`).
+- The React staff console (Mantine design system, TanStack Query and Table, React Router) has a URL for every screen: a sortable, filterable ticket queue, a full case screen with tabs (activity, communications, attachments, related, compliance, retention, audit trail), a charted dashboard, the auditor console, and administration split by area. Buttons follow the user's role, but the API is the only authority. See `docs/project/implementation-log.md` entry 29.
+- Authorized users see ticket changes live over an SSE stream fed by transactional `pg_notify`; events are policy-filtered per subscriber and carry no customer data (see `docs/project/implementation-log.md`).
 - Configurable auto-assignment (least-loaded/round-robin) and an SLA timer with idempotent, audited multi-level escalation run as system actors, safe across multiple API instances.
 - Channel adapters (email, portal, mobile, phone, internal) create tickets through one idempotent intake endpoint under a least-privilege `intake-gateway` service identity, with admin-managed per-channel routing.
 - Regulatory complaint handling is configuration: profiles define acknowledgement and final-response clocks (Australian ASIC RG 271 defaults seeded), with business-day maths, IDR outcomes, external-scheme tracking, vulnerability flags, a communication block for tipping-off control, and an audited complaints register export.
@@ -74,6 +76,6 @@ Keycloak runs at `http://localhost:8080`. The development realm has `local-branc
 
 ## What is and isn't done
 
-See [`docs/project-status.md`](docs/project-status.md) for the plain-language list and [`docs/production-readiness.md`](docs/production-readiness.md) for the prioritised go-live checklist (41 of 82 required/recommended items done; the remaining required items depend on the bank's environment, people or an external assessor).
+See [`docs/project/project-status.md`](docs/project/project-status.md) for the plain-language list and [`docs/operations/production-readiness.md`](docs/operations/production-readiness.md) for the prioritised go-live checklist (41 of 82 required/recommended items done; the remaining required items depend on the bank's environment, people or an external assessor).
 
 **In short.** Built and verified end to end against real services: case handling, configurable workflows and routing, SLA and regulatory clocks (complaints and privacy-correction requests), email and customer-portal intake, notifications and delivery, attachments with malware scanning, a tamper-evident and externally anchored audit trail with a restricted database account, hardened authentication, reporting feeds, runbooks, containers and a Helm chart. **Not in this repository** because it needs the bank: its identity provider, core-banking and CRM adapters, production bus/storage/KMS/SIEM, real SMS provider, a live-cluster install, and the assessments and sign-offs listed in the readiness document.

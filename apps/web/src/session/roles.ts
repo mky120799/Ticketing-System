@@ -2,7 +2,7 @@
  * What each role may do, from the console's point of view.
  *
  * IMPORTANT: this only decides which buttons and menus to SHOW. The API is the authority and re-checks every
- * request (role, scope, branch, sensitivity: see docs/roles-and-access.md). Hiding a button the user cannot use
+ * request (role, scope, branch, sensitivity: see docs/security/roles-and-access.md). Hiding a button the user cannot use
  * is about a tidy screen, never about security.
  */
 

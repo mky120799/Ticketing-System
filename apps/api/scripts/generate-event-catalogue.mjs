@@ -1,4 +1,4 @@
-// Generates docs/events.md from the source: every event the platform publishes through the outbox, with its aggregate type
+// Generates docs/product/events.md from the source: every event the platform publishes through the outbox, with its aggregate type
 // and payload fields. Run after adding or changing an event:  node scripts/generate-event-catalogue.mjs
 import { readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -105,5 +105,5 @@ With \`AUDIT_STREAM_ENABLED=true\` every audit record is also published as \`aud
 
 Add fields freely; consumers must ignore fields they do not know. A field is never repurposed. An event type that must change incompatibly gets a new name, and the old one is published in parallel for a deprecation period.
 `;
-writeFileSync(fileURLToPath(new URL('../../../docs/events.md', import.meta.url)), out);
-console.log(`Wrote ${rows.length} events to docs/events.md`);
+writeFileSync(fileURLToPath(new URL('../../../docs/product/events.md', import.meta.url)), out);
+console.log(`Wrote ${rows.length} events to docs/product/events.md`);
