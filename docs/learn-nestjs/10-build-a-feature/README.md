@@ -11,7 +11,7 @@ The exercise is a `POST /v1/tickets/:ticketId/ratings` feature: a staff member c
 ## 1. The big picture
 
 ```mermaid
-flowchart LR
+flowchart TB
   U[React form] --> R[Typed API request]
   R --> G[AuthGuard]
   G --> D[DTO and pipes]
@@ -21,8 +21,8 @@ flowchart LR
   S --> X[(PostgreSQL)]
   S --> A[Audit]
   S --> O[Outbox]
-  S --> T[Tests]
   S --> Q[React Query refetch]
+  S -.- T[Tests cover every step]
 ```
 
 ---

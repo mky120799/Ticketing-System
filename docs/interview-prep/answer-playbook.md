@@ -1,6 +1,6 @@
 # Code-level “How did you implement it?” playbook
 
-[Interview index](README.md) · [Module answer starters](module-answers.md) · [NestJS course](../learn-nestjs/README.md)
+[Interview index](README.md) · [Module answer starters](README.md) · [NestJS course](../learn-nestjs/README.md)
 
 The confusing part of “How did you implement it?” is that the interviewer is usually not asking for a technology list. They are testing whether you can move from requirement to runtime code, explain safety under failure/concurrency, and distinguish what you personally know from what a framework supplies.
 
@@ -299,4 +299,4 @@ The current limitation is _______________________,
 and I would fix/prove it by ______________________.
 ```
 
-Use the [module answer starters](module-answers.md) to fill this template for every module, and the [cross-module maps](../modules/reference/README.md) when the follow-up crosses wiring, persistence and frontend behavior.
+Use the [module answer starters](README.md) to fill this template for every module, and the [cross-module maps](../reference/README.md) when the follow-up crosses wiring, persistence and frontend behavior.

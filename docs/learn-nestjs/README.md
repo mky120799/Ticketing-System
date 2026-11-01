@@ -51,7 +51,7 @@ Do these after Lesson 6, or in parallel if security is your interview priority.
 
 ### Authentication
 
-Read [Authentication overview](../modules/authentication/README.md), [backend code walkthrough](../modules/authentication/backend.md), [browser session implementation](../frontend/authentication-and-session.md), [hardening](../modules/authentication/hardening.md) and [tests](../modules/authentication/testing.md).
+Read [Authentication overview](../auth/README.md), [backend code walkthrough](../auth/backend-guard.md), [browser session implementation](../auth/frontend-session.md), [hardening](../auth/token-hardening.md) and [tests](../auth/testing.md).
 
 You should be able to trace:
 
@@ -63,11 +63,11 @@ browser redirect -> authorization code + PKCE -> access token
 
 ### Authorization
 
-Read [Authorization](../modules/authorization.md) and [roles and access](../security/roles-and-access.md). Be ready to explain permission checks, queue/branch/entity scope, sensitivity, service identities, maker-checker separation and why hiding a frontend button is not authorization.
+Read [Authorization](../auth/authorization-policy.md) and [roles and access](../auth/roles-and-access.md). Be ready to explain permission checks, queue/branch/entity scope, sensitivity, service identities, maker-checker separation and why hiding a frontend button is not authorization.
 
 ### Audit
 
-Read [Audit overview](../modules/audit/README.md), [event and transaction model](../modules/audit/event-model.md), [integrity and operations](../modules/audit/integrity-and-operations.md), [frontend](../modules/audit/frontend.md) and [testing](../modules/audit/testing.md).
+Read [Audit overview](../audit/README.md), [event and transaction model](../audit/event-model.md), [integrity and operations](../audit/integrity-and-anchors.md), [frontend](../audit/frontend.md) and [testing](../audit/testing.md).
 
 You should be able to trace a business mutation and its evidence in the same transaction, then explain append-only database privileges, hash verification, archival and export step-up.
 
@@ -75,12 +75,12 @@ You should be able to trace a business mutation and its evidence in the same tra
 
 NestJS does not end at the controller response. Use the frontend track to see how API decisions reach users:
 
-1. [Staff app bootstrap and routing](../frontend/staff-console-bootstrap-and-routing.md)
-2. [Authentication and session](../frontend/authentication-and-session.md)
-3. [Typed API client and normalized errors](../frontend/api-data-flow.md)
-4. [Ticket list and React Query](../frontend/ticket-list-and-react-query.md)
-5. [Ticket workspace](../frontend/ticket-workspace.md)
-6. [Customer portal](../frontend/customer-portal.md)
+1. [Staff app bootstrap and routing](../frontend-architecture/app-shell-and-routing.md)
+2. [Authentication and session](../auth/frontend-session.md)
+3. [Typed API client and normalized errors](../frontend-architecture/api-client.md)
+4. [Ticket list and React Query](../tickets/frontend-queue.md)
+5. [Ticket workspace](../tickets/frontend-workspace.md)
+6. [Customer portal](../portal/frontend.md)
 
 The backend remains authoritative. Frontend route and capability checks improve usability; every API request still rechecks identity, permission, scope and current resource state.
 
@@ -143,4 +143,4 @@ Mark the course complete only when you can do all of the following from a blank 
 - Add a React Query mutation with error handling and targeted invalidation.
 - Give a code-level implementation answer that includes one real limitation.
 
-Continue to the [complete application module index](../modules/README.md) or the [end-to-end flow index](../flows/README.md).
+Continue to the [complete application module index](../README.md) or the [end-to-end flow index](../README.md).

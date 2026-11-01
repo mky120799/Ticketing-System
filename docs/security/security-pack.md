@@ -2,7 +2,7 @@
 
 Design-level evidence for a bank security review. It is a starting point for the bank's own threat-modelling and control mapping, not a certification.
 
-For a code-level learning walk-through, see the standalone [Authentication](../modules/authentication/README.md), [Authorization](../modules/authorization.md), and [Audit](../modules/audit/README.md) module guides. They map the controls below to the actual guard, policy, transaction, hash-chain and integrity-verification code.
+For a code-level learning walk-through, see the standalone [Authentication](../auth/README.md), [Authorization](../auth/authorization-policy.md), and [Audit](../audit/README.md) module guides. They map the controls below to the actual guard, policy, transaction, hash-chain and integrity-verification code.
 
 ## 1. Scope and assets
 
@@ -10,13 +10,42 @@ Assets, highest sensitivity first: customer-linked case content (descriptions, n
 
 ## 2. Trust boundaries and data flow
 
-```text
- Staff browser ──TLS──▶ Ingress/WAF ──▶ Web console (static)         Channel adapters ──▶ Intake API (service identity)
-        │                      │
-        └── OIDC (PKCE) ◀──▶ Bank IdP                                   Object storage ◀── presigned URLs ── browser
-        └── REST + SSE ───▶ API ──▶ PostgreSQL (authoritative, audit, outbox)
-                              ├──▶ Redis (non-authoritative cache)
-                              └──▶ Outbox ──▶ Event bus ──▶ downstream systems
+```mermaid
+flowchart TB
+  subgraph Internet["Internet / staff device"]
+    B[Staff browser]
+  end
+  subgraph Edge["Bank edge"]
+    W["Ingress / WAF"]
+    WC["Web console<br/>(static files)"]
+  end
+  subgraph App["Application tier"]
+    API[API]
+  end
+  subgraph Data["Data tier"]
+    PG[("PostgreSQL<br/>authoritative · audit · outbox")]
+    R[("Redis<br/>non-authoritative cache")]
+  end
+  subgraph Ext["Bank / external services"]
+    IDP["Bank IdP<br/>(OIDC + JWKS)"]
+    OS[("Object storage")]
+    BUS["Event bus →<br/>downstream systems"]
+  end
+  subgraph Svc["Service identities"]
+    AD["Channel adapters<br/>+ malware scanner"]
+  end
+
+  B -->|TLS| W
+  W --> WC
+  W -->|"REST + SSE"| API
+  B <-->|"OIDC login (PKCE)"| IDP
+  API -->|"verify JWT (JWKS)"| IDP
+  B -->|"presigned URL<br/>upload / download"| OS
+  API --> PG
+  API --> R
+  API -->|"issue presigned URLs"| OS
+  API -->|"outbox publisher"| BUS
+  AD -->|"intake / scan results<br/>(client-credentials token)"| API
 ```
 
 Boundaries: internet/browser to ingress; ingress to API; API to database; API to IdP (JWKS); API to object storage and bus; adapters and scanners (separate service identities) to API.

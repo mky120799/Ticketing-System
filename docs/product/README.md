@@ -2,6 +2,10 @@
 
 - [User guide](user-guide.md)
 - [Bank onboarding](bank-onboarding.md)
-- [Events and event catalogue](events.md)
-- [Frontend feature map](../frontend/features-and-routing.md)
-- [End-to-end flows](../flows/README.md)
+
+Related:
+
+- [Event catalogue](../outbox/event-catalogue.md): every integration event (generated from source)
+- [Roles and access](../auth/roles-and-access.md): who can do what
+- [Staff console structure](../frontend-architecture/app-shell-and-routing.md)
+- [Customer portal](../portal/README.md)

@@ -1,6 +1,6 @@
 # Runtime wiring map
 
-[Reference index](README.md) · [Module index](../README.md) · [Source coverage](../source-coverage.md)
+[Reference index](README.md) · [Module index](../README.md) · [Source coverage](source-coverage.md)
 
 Nest module metadata is the runtime composition contract. “Imports” below means explicit feature imports; global infrastructure may also be visible after `AppModule` imports it once.
 

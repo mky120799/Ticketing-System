@@ -6,7 +6,7 @@ Goal: after this lesson you can explain how a request proves who it is, where "y
 
 Builds on Lessons 1 to 3: a guard is a provider (Lesson 1) attached to a controller (Lesson 2), and it runs before the validation pipe (Lesson 3).
 
-This lesson explains the NestJS guard boundary. For the implementation-specific code walk-through, continue with [Authentication](../../modules/authentication/README.md), [Authorization](../../modules/authorization.md), and [Audit](../../modules/audit/README.md).
+This lesson explains the NestJS guard boundary. For the implementation-specific code walk-through, continue with [Authentication](../../auth/README.md), [Authorization](../../auth/authorization-policy.md), and [Audit](../../audit/README.md).
 
 ---
 

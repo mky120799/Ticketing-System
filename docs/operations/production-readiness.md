@@ -161,7 +161,7 @@ Verified: 33 unit tests, 28 integration tests across 7 suites against live Postg
 | Item | Priority | Owner |
 |---|---|---|
 | ✅ Publisher verified against a real Kafka-compatible broker; the bank must supply its bus, topics, schemas and security (mTLS/SASL) | MUST | Bank |
-| ✅ Event catalogue generated from code with compatibility rules (`docs/product/events.md`); a schema registry is the bank's choice | SHOULD | Us + Bank |
+| ✅ Event catalogue generated from code with compatibility rules (`docs/outbox/event-catalogue.md`); a schema registry is the bank's choice | SHOULD | Us + Bank |
 | ✅ DONE — Dead-letter visibility, replay (audited) and admin screen; metric exists for alerting | MUST | Us |
 | Adapters to core banking, CRM, cards, payments, KYC, fraud, document management (controlled APIs only) | MUST (scope per pilot) | Bank + Us |
 | Reconciliation process and ownership | MUST | Bank |

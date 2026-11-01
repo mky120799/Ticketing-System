@@ -2,7 +2,7 @@
 
 [Core chapter](README.md) · **Code walkthrough** · [Practice and interview](practice-and-interview.md) · [Course index](../README.md)
 
-This lesson focuses on the Nest guard boundary. For every claim check, OIDC browser flow and policy rule, use the separate [authentication](../../modules/authentication/README.md) and [authorization](../../modules/authorization.md) tracks.
+This lesson focuses on the Nest guard boundary. For every claim check, OIDC browser flow and policy rule, use the separate [authentication](../../auth/README.md) and [authorization](../../auth/authorization-policy.md) tracks.
 
 ## 1. Where the guard is bound
 
@@ -176,4 +176,4 @@ The browser may decode claims for presentation, but API authorization relies onl
 - The guard catches verification details and returns a uniform 401, so operational telemetry is essential.
 - A valid token is only identity evidence; service policy and current database state still decide access.
 
-Continue with the full [backend authentication walkthrough](../../modules/authentication/backend.md) for configuration, claim sources, revocation and step-up details.
+Continue with the full [backend authentication walkthrough](../../auth/backend-guard.md) for configuration, claim sources, revocation and step-up details.

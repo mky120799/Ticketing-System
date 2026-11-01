@@ -2,7 +2,9 @@
 
 Who can do what in the platform. Every row below was checked against the code (`apps/api/src/auth/policy.service.ts` and the services that call it), not written from memory. The API is the authority: the console only hides buttons, it never grants anything.
 
-If you are learning the implementation, read the standalone [Authentication](../modules/authentication/README.md), [Authorization](../modules/authorization.md), and [Audit](../modules/audit/README.md) guides alongside this document. They explain how the token becomes `UserContext`, how `PolicyService` evaluates the four checks below, and how both successful actions and authorization denials are recorded.
+[Back to Auth index](README.md)
+
+If you are learning the implementation, read this alongside the [backend guard walkthrough](backend-guard.md) (how the token becomes `UserContext`), the [authorization policy](authorization-policy.md) (how `PolicyService` evaluates the four checks below, with line links), and [Audit](../audit/README.md) (how successful actions and authorization denials are recorded). The code for the matrix is [policy.service.ts#L8-L13](../../apps/api/src/auth/policy.service.ts#L8-L13); the UI mirror is [roles.ts#L12-L23](../../apps/web/src/session/roles.ts#L12-L23).
 
 ## 1. How access is decided
 

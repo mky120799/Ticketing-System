@@ -1,6 +1,6 @@
 # Failure and test map
 
-[Reference index](README.md) · [Data and consistency](data-and-consistency-map.md) · [Interview answers](../../interview-prep/module-answers.md)
+[Reference index](README.md) · [Data and consistency](data-and-consistency-map.md) · [Interview answers](../interview-prep/README.md)
 
 This table identifies the failure that defines each module's trust boundary and the smallest honest test that can prove it. “Test” means required evidence; some rows describe hardening coverage to add, not necessarily a test already present.
 

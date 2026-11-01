@@ -1,6 +1,6 @@
 # Frontend-to-backend implementation map
 
-[Reference index](README.md) · [Frontend index](../../frontend/README.md) · [Flow index](../../flows/README.md)
+[Reference index](README.md) · [Frontend index](../frontend-architecture/README.md) · [Flow index](../README.md)
 
 There are two React/Vite applications: staff console (`apps/web`) and customer portal (`apps/portal`). Both use typed client functions, but their identity and ownership boundaries are separate.
 
