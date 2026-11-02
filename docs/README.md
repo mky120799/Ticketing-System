@@ -50,7 +50,7 @@ flowchart TB
 | [Workflow](workflow/README.md) | Status lifecycle as data (state machine), graph validation, the background scheduler |
 | [Assignment and routing](assignment-and-routing/README.md) | Auto-assignment strategies, manual assignment, escalation rules, routing administration |
 | [Communications](communications/README.md) | Template-based customer messages, maker-checker approval, resolution notice, delivery worker, receipts |
-| [Notifications](notifications/README.md) | Staff inbox (the bell): audience targeting, per-user read state, live push |
+| [Notifications](notifications/README.md) | Staff inbox (the bell): end-to-end journey, fan-out on read, audience SQL, per-person read state, `pg_notify` + SSE push, measured performance limits, hands-on labs |
 | [Attachments](attachments/README.md) | Presigned direct-to-storage uploads, malware scanning, customer documents, secure upload links |
 | [Compliance](compliance/README.md) | Complaint and privacy regulatory clocks, AFCA, communication block (tipping-off), subject access, complaints register |
 | [Retention](retention/README.md) | Legal hold and de-identification of closed cases |
@@ -78,7 +78,7 @@ flowchart TB
 | Topic | What it covers |
 |---|---|
 | [API bootstrap](api-bootstrap/README.md) | `main.ts`, the module graph, the request pipeline, validation, errors |
-| [Database](database/README.md) | Pool and transactions, the **locking and concurrency catalogue**, migrations, roles |
+| [Database](database/README.md) | A full PostgreSQL course on this codebase: modelling, constraints, indexes and query plans, SQL patterns, transactions, the pool, MVCC and isolation, the **locking and concurrency catalogue**, migrations and roles, production operations, 16 hands-on labs |
 | [Cache](cache/README.md) | Optional fail-open Redis |
 | [Observability](observability/README.md) | Prometheus metrics, health and readiness, logs, correlation IDs, alerts |
 | [Frontend architecture](frontend-architecture/README.md) | App shell, routing, API client, TanStack Query patterns, UI conventions |

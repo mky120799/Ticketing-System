@@ -48,7 +48,7 @@ The completeness check: every source area mapped to the topic folder that explai
 | [`email/contact-resolver.ts`](../../apps/api/src/email/contact-resolver.ts) | [Communications → contact resolution](../communications/delivery-and-receipts.md#2-contact-resolution-no-contact-data-stored) |
 | [`migrations/`](../../apps/api/migrations/) | [Database → migrations](../database/migrations-and-roles.md), [Tickets → data model](../tickets/data-model.md) |
 | [`scripts/`](../../apps/api/scripts/) | archive/keys: [Audit](../audit/integrity-and-anchors.md); migrate: [Database](../database/migrations-and-roles.md); event catalogue: [Outbox](../outbox/event-catalogue.md); simulate intake: [Intake](../intake/channel-intake.md) |
-| [`infra/postgres/roles.sql`](../../infra/postgres/roles.sql) | [Audit → database protection](../audit/database-protection.md) |
+| [`infra/postgres/roles.sql`](../../infra/postgres/roles.sql) | [Database → roles](../database/migrations-and-roles.md#5-roles-owner-app-reporting), [Audit → database protection](../audit/database-protection.md) |
 
 ## Staff console (`apps/web`)
 
@@ -64,7 +64,7 @@ The completeness check: every source area mapped to the topic folder that explai
 | `features/audit/` | [Audit → frontend](../audit/frontend.md) |
 | `features/dashboard/` | [Dashboard](../dashboard/how-it-works.md#5-frontend) |
 | `features/admin/` | [Configuration → frontend](../configuration/frontend.md) |
-| `layout/notification-menu.tsx` | [Notifications](../notifications/how-it-works.md#5-the-bell-frontend) |
+| `layout/notification-menu.tsx` | [Notifications → the bell](../notifications/frontend.md) |
 | `live/use-live-updates.ts` | [Live updates → frontend](../live-updates/frontend.md) |
 | `components/person-name.tsx` | [Directory](../directory/how-it-works.md#6-personname-batching-in-the-browser) |
 
